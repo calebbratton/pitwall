@@ -253,6 +253,8 @@ async def replay(
             if fast_forward and (_lap_count(message) or 0) >= from_lap:
                 fast_forward = False
                 yield snapshot_event(monitor.snapshot())
+                if positions := monitor.positions_event():  # dots appear straight away
+                    yield positions
             if not fast_forward and previous is not None:
                 wait = (message.offset - previous).total_seconds() / speed
                 if wait > 0:
