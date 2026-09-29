@@ -6,7 +6,9 @@ Replaying these through the state tracker is indistinguishable from the live fee
 features are built and tested on finished races. Files are cached under data/livetiming/.
 """
 
+import base64
 import json
+import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
@@ -93,13 +95,28 @@ class ArchiveSession:
         return text
 
     def messages(self, topics: tuple[str, ...] = STRATEGY_TOPICS) -> Iterator[Message]:
-        """All messages for `topics`, merged in time order."""
+        """All messages for `topics`, merged in time order. Compressed topics (`*.z`) are
+        decoded, so callers always get plain dicts."""
         merged: list[Message] = []
         for topic in topics:
             for line in self._stream(topic).splitlines():
-                brace = line.find("{")
-                if brace <= 0:
+                start = _payload_start(line)
+                if start <= 0:
                     continue
-                merged.append(Message(_parse_offset(line[:brace]), topic, json.loads(line[brace:])))
+                payload = json.loads(line[start:])
+                data = decode_compressed(payload) if isinstance(payload, str) else payload
+                merged.append(Message(_parse_offset(line[:start]), topic, data))
         merged.sort(key=lambda m: m.offset)  # stable: keeps per-topic order on ties
         return iter(merged)
+
+
+def _payload_start(line: str) -> int:
+    """Index where the JSON payload starts: an object, or a quoted string for `.z` topics."""
+    candidates = [i for i in (line.find("{"), line.find('"')) if i > 0]
+    return min(candidates) if candidates else -1
+
+
+def decode_compressed(payload: str) -> dict:
+    """`.z` topics (Position.z, CarData.z) are base64 of raw-deflated JSON, in both the archive
+    and the live feed."""
+    return json.loads(zlib.decompress(base64.b64decode(payload), -zlib.MAX_WBITS))

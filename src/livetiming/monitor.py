@@ -11,6 +11,8 @@ Events (dicts with a "type"):
   radio_transcript {url, tla, text}                                   when a clip's text is ready
   pit_calls     {report}                                             when a SC / VSC starts
   snapshot      {lap, total_laps, status, clock, drivers:[...]}      throttled by the driver
+  track         {points: [[x, y]...], bounds: [minx, miny, maxx, maxy]}   once, before playback
+  positions     {utc, cars: [{number, tla, x, y, status}]}           ~4/s wall clock (replay)
 """
 
 import asyncio
@@ -23,9 +25,10 @@ from src.livetiming.archive import STATIC, STRATEGY_TOPICS, ArchiveSession, Mess
 from src.livetiming.snapshot import TRACK_STATUS, RaceSnapshot, build_snapshot
 from src.livetiming.state import TimingState
 from src.livetiming.strategy import pit_calls
+from src.livetiming.track import latest_positions, track_outline
 
 NEUTRALISED = {"SAFETY_CAR", "VSC"}
-REPLAY_TOPICS = (*STRATEGY_TOPICS, "TeamRadio")
+REPLAY_TOPICS = (*STRATEGY_TOPICS, "TeamRadio", "Position.z")
 
 
 def snapshot_event(snap: RaceSnapshot) -> dict[str, Any]:
@@ -41,6 +44,7 @@ def snapshot_event(snap: RaceSnapshot) -> dict[str, Any]:
                 "tla": d.tla,
                 "number": d.number,
                 "team": d.team,
+                "team_colour": d.team_colour,
                 "gap": d.gap_to_leader_s,
                 "laps_down": d.laps_down,
                 "interval": d.interval_s,
@@ -63,11 +67,35 @@ class RaceMonitor:
         self._session_sent = False
         self._race_control_seen = 0
         self._radio_seen: set[str] = set()
+        self._positions: tuple[str, dict] | None = None
+
+    def positions_event(self) -> dict[str, Any] | None:
+        """Newest car coordinates, or None before the first Position.z message."""
+        if not self._positions:
+            return None
+        timestamp, entries = self._positions
+        drivers = self.state.topics.get("DriverList", {})
+        cars = [
+            {
+                "number": number,
+                "tla": drivers.get(number, {}).get("Tla", number),
+                "x": car.get("X"),
+                "y": car.get("Y"),
+                "status": car.get("Status"),
+            }
+            for number, car in entries.items()
+            if isinstance(car, dict)
+        ]
+        return {"type": "positions", "utc": timestamp, "cars": cars}
 
     def snapshot(self) -> RaceSnapshot:
         return build_snapshot(self.state)
 
     def feed(self, message: Message) -> list[dict[str, Any]]:
+        if message.topic == "Position.z":
+            # High-frequency and huge: kept out of TimingState; the caller throttles emission.
+            self._positions = latest_positions(message) or self._positions
+            return []
         self.state.apply(message.topic, message.data, str(message.offset))
         events: list[dict[str, Any]] = []
         topics = self.state.topics
@@ -153,6 +181,7 @@ async def replay(
     snapshot_every_s: float = 1.0,
     transcriber: Transcriber | None = None,
     transcript_wait_s: float = 30.0,
+    positions_every_s: float = 0.25,
 ) -> AsyncIterator[dict[str, Any]]:
     """Play an archived session as if live. Messages before `from_lap` are applied instantly
     (their events are dropped, except `session`); afterwards the original timing is kept,
@@ -196,6 +225,10 @@ async def replay(
 
     # Downloading/parsing the archive is blocking I/O; keep it off the event loop.
     messages = await asyncio.to_thread(lambda: list(session.messages(REPLAY_TOPICS)))
+    outline = await asyncio.to_thread(track_outline, messages)
+    if outline:
+        yield {"type": "track", **outline}
+    last_positions = 0.0
     try:
         for message in messages:
             if fast_forward and (_lap_count(message) or 0) >= from_lap:
@@ -217,6 +250,14 @@ async def replay(
                 yield event
 
             now = loop.time()
+            if (
+                message.topic == "Position.z"
+                and not fast_forward
+                and now - last_positions >= positions_every_s
+                and (positions := monitor.positions_event())
+            ):
+                yield positions
+                last_positions = now
             pit_call_made = any(e["type"] == "pit_calls" for e in events)
             if not fast_forward and (pit_call_made or now - last_snapshot >= snapshot_every_s):
                 yield snapshot_event(monitor.snapshot())

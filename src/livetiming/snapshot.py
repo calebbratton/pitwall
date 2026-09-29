@@ -26,6 +26,7 @@ class DriverState:
     number: str
     tla: str
     team: str
+    team_colour: str  # hex without "#", from the feed's DriverList
     position: int | None
     gap_to_leader_s: float | None  # None when lapped or unknown
     laps_down: int
@@ -119,6 +120,7 @@ def build_snapshot(state: TimingState) -> RaceSnapshot:
                 number=number,
                 tla=meta.get("Tla", number),
                 team=meta.get("TeamName", ""),
+                team_colour=meta.get("TeamColour", ""),
                 position=position,
                 gap_to_leader_s=gap,
                 laps_down=laps_down,

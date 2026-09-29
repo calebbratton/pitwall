@@ -91,6 +91,14 @@ skips telemetry and an error path (ambiguous/future race) straight to `synthesiz
 - Try it: `python -m src.live --year 2026 --meeting Azerbaijan --speed 60 --from-lap 29`
   (two safety cars) or `--year 2024 --meeting Miami --from-lap 26`. API: `GET /api/live/sessions`,
   `GET /api/live/replay?path=&speed=&from_lap=&transcribe=` (SSE; UI's LIVE tab).
+- Track map: `track.py` traces the circuit outline from the leader's `Position.z` path over lap 3
+  and the replay emits `track` (once) and `positions` (~4/s) events. `Position.z` is public in
+  the archive but gated behind an F1 TV login on the live feed.
+- **F1 TV token policy (user decision):** the user's personal F1 TV token (`F1TV_SUBSCRIPTION_TOKEN`
+  in `.env`) is for the user's own local use only. Never use it to serve data to other people,
+  never send it to a browser, never store it server-side in a deployed app. Token-gated features
+  are off by default and enabled only by a local setting. A public deployment must use archive
+  replays / post-race data, or have each viewer sign in with their own F1 TV account.
 - Tests use `tests/fixtures/livetiming/miami_2024_sc_lap28.json` (state at the lap-28 SC) and
   synthetic messages; never hit the archive or Groq in `tests/`.
 
