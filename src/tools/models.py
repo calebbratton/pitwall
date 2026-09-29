@@ -13,9 +13,14 @@ class Session(_Record):
     session_name: str
     session_type: str
     country_name: str
+    location: str
     circuit_short_name: str
     year: int
     date_start: str
+
+    @property
+    def label(self) -> str:
+        return f"{self.location} ({self.country_name}, {self.date_start[:10]})"
 
 
 class Driver(_Record):

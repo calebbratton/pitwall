@@ -8,6 +8,7 @@ with a disk cache; `MockOpenF1Client` serves recorded fixtures so tests never to
 import hashlib
 import json
 import time
+import unicodedata
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -26,17 +27,37 @@ class OpenF1Error(RuntimeError):
     pass
 
 
+def _normalize(name: str) -> str:
+    """Case- and accent-insensitive form, so "montreal" matches "Montréal"."""
+    decomposed = unicodedata.normalize("NFKD", name.strip().casefold())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
 class OpenF1Client(ABC):
     @abstractmethod
     def _fetch(self, endpoint: str, params: Params) -> list[dict[str, Any]]: ...
 
-    def get_session(self, year: int, country_name: str, session_name: str = "Race") -> Session:
-        rows = self._fetch(
-            "sessions", {"year": year, "country_name": country_name, "session_name": session_name}
-        )
-        if not rows:
-            raise OpenF1Error(f"No {session_name} session found for {country_name} {year}.")
-        return Session.model_validate(rows[0])
+    def get_session(self, year: int, place: str, session_name: str = "Race") -> Session:
+        """Find a session by country, location or circuit name (case-insensitive).
+
+        Several countries host more than one race a season (2026: Spain has Barcelona and
+        Madrid), so an ambiguous country raises instead of guessing.
+        """
+        rows = self._fetch("sessions", {"year": year, "session_name": session_name})
+        sessions = [Session.model_validate(r) for r in rows]
+        needle = _normalize(place)
+        matches = [
+            s
+            for s in sessions
+            if needle in {_normalize(n) for n in (s.country_name, s.location, s.circuit_short_name)}
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            options = "; ".join(s.label for s in matches)
+            raise OpenF1Error(f"{place!r} matches several {year} races, specify one: {options}")
+        known = ", ".join(sorted({s.location for s in sessions})) or "none"
+        raise OpenF1Error(f"No {year} {session_name} found for {place!r}. Known locations: {known}")
 
     def get_drivers(self, session_key: int, team_name: str | None = None) -> list[Driver]:
         params: Params = {"session_key": session_key}

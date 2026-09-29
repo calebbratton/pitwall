@@ -14,14 +14,25 @@ def client() -> MockOpenF1Client:
     return MockOpenF1Client(MONACO_2024)
 
 
-def test_get_session(client):
-    session = client.get_session(2024, "Monaco")
+@pytest.mark.parametrize("place", ["Monaco", "monte carlo", "MONACO"])
+def test_get_session_by_country_location_or_circuit(client, place):
+    session = client.get_session(2024, place)
     assert session.session_key == SESSION_KEY
     assert session.circuit_short_name == "Monte Carlo"
 
 
+def test_get_session_ignores_accents(client):
+    assert client.get_session(2024, "Montreal").location == "Montréal"
+
+
+def test_get_session_ambiguous_country_raises_with_options(client):
+    with pytest.raises(OpenF1Error, match="Miami.*Austin.*Las Vegas"):
+        client.get_session(2024, "United States")
+    assert client.get_session(2024, "Las Vegas").country_name == "United States"
+
+
 def test_get_session_missing_raises(client):
-    with pytest.raises(OpenF1Error):
+    with pytest.raises(OpenF1Error, match="Known locations"):
         client.get_session(2024, "Atlantis")
 
 

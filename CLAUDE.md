@@ -41,6 +41,26 @@ The graph state is a `TypedDict` with at least:
 `retrieved_rules_text`, `evaluation_steps`. Nodes return partial state updates; never mutate
 state in place.
 
+## Regulations (RAG)
+
+- **2026 is the primary season** (the user analyses races as this season happens). 2024-2025
+  are indexed too for historical benchmarks.
+- Sources live in `src/rag/sources.py`. Each season has several issues; `source_for_race()` picks
+  the issue in force on race day, and every search is filtered to that season + issue. When the FIA
+  publishes a new issue, add it there and re-run `scripts/ingest_regulations.py`.
+- Two document formats, two parsers in `src/rag/chunking.py`: `classic` (2023-2025, `30.5`) and
+  `section_b` (2026+, `B6.3.6`). The 2026 PDF renders the "ff" ligature as `‘`/`W`; it's fixed
+  in `_fix_ligatures`. Appendices are not indexed.
+- One chunk per clause (long ones split into parts); `RegChunk.citation` is what answers must cite.
+- Ingest takes a few minutes on this machine (CPU embeddings); searches are fast.
+
+## OpenF1 notes
+
+- `get_session(year, place)` matches country, location or circuit, accent-insensitive. Several
+  countries host multiple races (2026: Spain = Barcelona + Madrid; USA = Miami, Austin, Las
+  Vegas), so an ambiguous country raises with the options rather than guessing.
+- OpenF1 lists the full season calendar, including races that haven't happened yet (no data).
+
 ## Conventions
 
 - **LLM provider isolation:** nodes get a model from `src/llm/` (selected by `LLM_PROVIDER` /
@@ -63,7 +83,8 @@ state in place.
 ```bash
 uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e ".[dev]"
-python scripts/ingest_regulations.py   # download + chunk + index FIA regs
+python scripts/ingest_regulations.py   # download + chunk + index FIA regs (~minutes)
+python scripts/record_fixtures.py --year 2024 --place Monaco --drivers 4 81 16
 pytest tests --ignore=tests/evals      # fast, offline
 pytest tests/evals                     # benchmark suite, calls the LLM
 ```

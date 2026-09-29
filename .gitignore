@@ -10,3 +10,4 @@ __pycache__/
 # Local artifacts (regs, Qdrant storage, OpenF1 cache)
 data/*
 !data/.gitkeep
+.DS_Store
