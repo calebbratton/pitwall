@@ -8,6 +8,9 @@ grounded strategic verdict.
 This is a hobby/portfolio project run by one person. **Optimize for $0 running cost**. LLM inference is
 hosted (the dev machine is too weak for local models); everything else runs locally. Don't add paid services, hosted infra, or cloud dependencies unless asked.
 
+**Direction:** an all-encompassing race strategy platform built on public data. See
+`docs/ROADMAP.md` (data inventory, principles, phases) before starting new features.
+
 ## Stack
 
 | Concern         | Choice                                                                 |
