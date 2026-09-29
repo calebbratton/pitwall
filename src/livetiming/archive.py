@@ -67,6 +67,17 @@ def find_session(year: int, meeting: str, session: str = "Race") -> str:
     return matches[0]
 
 
+def list_sessions(year: int, session: str = "Race") -> list[dict[str, str]]:
+    """Archived sessions of one type for a season: [{"path", "meeting", "date"}]."""
+    index = json.loads(_get_text(f"{STATIC}/{year}/Index.json"))
+    return [
+        {"path": s["Path"], "meeting": m.get("Name", ""), "date": s.get("StartDate", "")[:10]}
+        for m in index["Meetings"]
+        for s in m["Sessions"]
+        if s.get("Name") == session
+    ]
+
+
 class ArchiveSession:
     def __init__(self, path: str, cache_dir: Path = DEFAULT_CACHE) -> None:
         self.path = path.strip("/") + "/"

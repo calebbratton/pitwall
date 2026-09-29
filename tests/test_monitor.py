@@ -1,0 +1,128 @@
+import asyncio
+from datetime import timedelta
+
+from src.livetiming.archive import Message
+from src.livetiming.monitor import RaceMonitor, replay
+
+
+def _msg(seconds: float, topic: str, data: dict) -> Message:
+    return Message(timedelta(seconds=seconds), topic, data)
+
+
+def _race_start() -> list[Message]:
+    return [
+        _msg(0, "SessionInfo", {"Name": "Race", "Meeting": {"Name": "Test GP"}}),
+        _msg(0, "TrackStatus", {"Status": "1", "Message": "AllClear"}),
+        _msg(1, "DriverList", {"4": {"Tla": "NOR"}, "1": {"Tla": "VER"}}),
+        _msg(1, "LapCount", {"CurrentLap": 1, "TotalLaps": 50}),
+        _msg(
+            1,
+            "TimingData",
+            {
+                "Lines": {
+                    "4": {"Position": "1", "GapToLeader": "LAP 1", "NumberOfLaps": 0},
+                    "1": {"Position": "2", "GapToLeader": "+20.0", "NumberOfLaps": 0},
+                }
+            },
+        ),
+        _msg(
+            1,
+            "TimingAppData",
+            {
+                "Lines": {
+                    "4": {"Stints": [{"Compound": "MEDIUM", "New": "true", "TotalLaps": 0}]},
+                    "1": {"Stints": [{"Compound": "HARD", "New": "true", "TotalLaps": 0}]},
+                }
+            },
+        ),
+        _msg(
+            2,
+            "RaceControlMessages",
+            {"Messages": [{"Lap": 1, "Category": "Flag", "Message": "GREEN LIGHT"}]},
+        ),
+    ]
+
+
+def _types(events):
+    return [e["type"] for e in events]
+
+
+def test_monitor_emits_session_status_race_control_and_pit_calls_on_safety_car():
+    monitor = RaceMonitor(radio_base_url="https://static/session/")
+    events = [e for m in _race_start() for e in monitor.feed(m)]
+    assert _types(events) == ["track_status", "session", "race_control"]
+    assert events[1] == {
+        "type": "session",
+        "meeting": "Test GP",
+        "session": "Race",
+        "total_laps": 50,
+    }
+
+    monitor.feed(_msg(3, "LapCount", {"CurrentLap": 20}))
+    sc = monitor.feed(_msg(4, "TrackStatus", {"Status": "4", "Message": "SCDeployed"}))
+    assert _types(sc) == ["track_status", "pit_calls"]
+    calls = {c["tla"]: c["call"] for c in sc[1]["report"]["calls"]}
+    assert calls == {"NOR": "PIT", "VER": "PIT"}  # both still need a second compound
+
+    # Staying under the safety car doesn't re-trigger calls; a VSC straight after doesn't either.
+    assert monitor.feed(_msg(5, "TrackStatus", {"Status": "4"})) == []
+    assert _types(monitor.feed(_msg(6, "TrackStatus", {"Status": "6"}))) == ["track_status"]
+
+
+def test_monitor_race_control_and_radio_are_emitted_once_each():
+    monitor = RaceMonitor(radio_base_url="https://static/session/")
+    for m in _race_start():
+        monitor.feed(m)
+    rc = monitor.feed(
+        _msg(
+            3,
+            "RaceControlMessages",
+            {"Messages": {"1": {"Lap": 2, "Message": "SAFETY CAR DEPLOYED"}}},
+        )
+    )
+    assert [e["message"] for e in rc] == ["SAFETY CAR DEPLOYED"]
+
+    clip = {"Utc": "t", "RacingNumber": "4", "Path": "TeamRadio/NOR_1.mp3"}
+    radio = monitor.feed(_msg(4, "TeamRadio", {"Captures": [clip]}))
+    assert radio == [
+        {
+            "type": "radio",
+            "driver": "4",
+            "tla": "NOR",
+            "utc": "t",
+            "url": "https://static/session/TeamRadio/NOR_1.mp3",
+        }
+    ]
+    assert monitor.feed(_msg(5, "TeamRadio", {"Captures": {"0": {"Utc": "t"}}})) == []
+
+
+class FakeSession:
+    path = "2099/test/race/"
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    def messages(self, topics):
+        return iter(self._messages)
+
+
+def test_replay_fast_forwards_then_streams_with_snapshots():
+    messages = [
+        *_race_start(),
+        _msg(90, "LapCount", {"CurrentLap": 2}),
+        _msg(180, "LapCount", {"CurrentLap": 3}),
+        _msg(181, "TrackStatus", {"Status": "4"}),
+    ]
+
+    async def collect():
+        return [e async for e in replay(FakeSession(messages), speed=1e6, from_lap=2)]
+
+    events = asyncio.run(collect())
+    kinds = _types(events)
+    # Fast-forward drops the pre-lap-2 events except `session`, then a snapshot marks the jump.
+    assert kinds[:2] == ["session", "snapshot"]
+    assert "race_control" not in kinds
+    assert kinds.count("pit_calls") == 1
+    assert kinds[-1] == "end"
+    assert events[-2]["type"] == "snapshot" and events[-2]["lap"] == 3
+    assert events[-2]["drivers"][0]["tla"] == "NOR"

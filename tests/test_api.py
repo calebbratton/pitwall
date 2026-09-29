@@ -104,3 +104,21 @@ def test_chat_error_event():
 def test_chat_rejects_empty_message():
     with _client(Scripted([]), Scripted([]), Scripted([])) as client:
         assert client.post("/api/chat", json={"message": ""}).status_code == 422
+
+
+def test_live_replay_streams_monitor_events(monkeypatch):
+    from tests.test_monitor import FakeSession, _msg, _race_start
+
+    messages = [
+        *_race_start(),
+        _msg(90, "LapCount", {"CurrentLap": 20}),
+        _msg(91, "TrackStatus", {"Status": "4"}),
+    ]
+    monkeypatch.setattr("src.api.ArchiveSession", lambda path: FakeSession(messages))
+    with _client(Scripted([]), Scripted([]), Scripted([])) as client:
+        resp = client.get("/api/live/replay", params={"path": "2099/test/race/", "speed": 1000})
+    kinds = [e for e, _ in _events(resp.text)]
+    assert {"track_status", "session", "snapshot"} <= set(kinds)
+    assert "pit_calls" in kinds and kinds[-1] == "end"
+    pit = next(d for e, d in _events(resp.text) if e == "pit_calls")
+    assert {c["tla"] for c in pit["report"]["calls"]} == {"NOR", "VER"}

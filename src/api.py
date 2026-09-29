@@ -13,17 +13,19 @@ import json
 import logging
 import os
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
 from src.agents.graph import build_graph, memory_checkpointer
+from src.livetiming.archive import ArchiveSession, list_sessions
+from src.livetiming.monitor import replay
 from src.rag.index import RegulationIndex
 from src.tools.openf1 import HttpOpenF1Client
 
@@ -98,6 +100,8 @@ def create_app(
     )
     app.get("/api/health")(health)
     app.post("/api/chat")(chat)
+    app.get("/api/live/sessions")(live_sessions)
+    app.get("/api/live/replay")(live_replay)
     return app
 
 
@@ -129,6 +133,32 @@ def chat(req: ChatRequest, request: Request) -> StreamingResponse:
             yield _sse("error", {"message": f"{type(e).__name__}: {e}"})
 
     # Sync generator: Starlette runs it in a threadpool, so graph.stream doesn't block the loop.
+    return StreamingResponse(
+        events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+    )
+
+
+def live_sessions(year: int) -> list[dict[str, str]]:
+    """Races in F1's live-timing archive for `year` (for the replay picker)."""
+    return list_sessions(year)
+
+
+def live_replay(
+    path: str,
+    speed: float = Query(20.0, gt=0, le=1000),
+    from_lap: int | None = Query(None, ge=1),
+) -> StreamingResponse:
+    """Replay an archived race as if live (SSE, GET so EventSource works). Event names are the
+    monitor's event types: session, snapshot, track_status, race_control, radio, pit_calls, end."""
+
+    async def events() -> AsyncIterator[str]:
+        try:
+            async for event in replay(ArchiveSession(path), speed=speed, from_lap=from_lap):
+                yield _sse(event["type"], event)
+        except Exception as e:
+            log.exception("replay failed")
+            yield _sse("error", {"message": f"{type(e).__name__}: {e}"})
+
     return StreamingResponse(
         events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
     )

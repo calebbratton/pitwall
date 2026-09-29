@@ -39,6 +39,11 @@ MAX_FETCH_ROUNDS = 4
 RULES_PER_QUERY = 4
 MAX_RULES = 5
 RRF_K = 60  # standard reciprocal-rank-fusion constant
+# Groq free tier caps input at ~7-8K tokens/minute per model (~4 chars/token), so every prompt
+# that grows with data has a character budget.
+MAX_TOOL_RESULT_CHARS = 2500
+OLD_ROUND_RESULT_CHARS = 300  # earlier rounds' results, when resent to the fetcher
+MAX_ANALYST_TELEMETRY_CHARS = 12000
 HISTORY_MESSAGES = 6
 
 
@@ -50,6 +55,24 @@ def memory_checkpointer() -> InMemorySaver:
         ]
     )
     return InMemorySaver(serde=serde)
+
+
+def _clip(text: str, limit: int) -> str:
+    return (
+        text if len(text) <= limit else f"{text[:limit]}... [truncated {len(text) - limit} chars]"
+    )
+
+
+def _compact_old_rounds(messages: list) -> list:
+    """The fetcher already saw earlier rounds' tool results; resend them shortened so the
+    transcript doesn't outgrow the per-minute token limit. The latest round stays whole."""
+    last_ai = max((i for i, m in enumerate(messages) if isinstance(m, AIMessage)), default=-1)
+    return [
+        ToolMessage(_clip(m.content, OLD_ROUND_RESULT_CHARS), tool_call_id=m.tool_call_id)
+        if isinstance(m, ToolMessage) and i < last_ai
+        else m
+        for i, m in enumerate(messages)
+    ]
 
 
 def _history(state: PitWallState) -> str:
@@ -186,7 +209,7 @@ def build_graph(
             ),
             HumanMessage(state["current_query"]),
         ]
-        reply = model("fetcher").bind_tools(tools).invoke(messages)
+        reply = model("fetcher").bind_tools(tools).invoke(_compact_old_rounds(messages))
         calls = [f"{c['name']}({c['args']})" for c in reply.tool_calls]
         return {
             "fetch_messages": [*messages, reply],
@@ -209,6 +232,7 @@ def build_graph(
                     output = f"ERROR: {type(e).__name__}: {e}"
             else:
                 output = f"ERROR: unknown tool {call['name']!r}"
+            output = _clip(output, MAX_TOOL_RESULT_CHARS)
             tool_messages.append(ToolMessage(output, tool_call_id=call["id"]))
             results.append(ToolResult(tool=call["name"], args=call["args"], result=output))
         return {
@@ -245,9 +269,11 @@ def build_graph(
 
     def analyze(state: PitWallState) -> dict[str, Any]:
         reg = state["reg_context"]
+        results = state["fetched_telemetry_json"]
+        per_result = MAX_ANALYST_TELEMETRY_CHARS // max(len(results), 1)
         telemetry = [
-            {"tool": r["tool"], "args": r["args"], "result": r["result"]}
-            for r in state["fetched_telemetry_json"]
+            {"tool": r["tool"], "args": r["args"], "result": _clip(r["result"], per_result)}
+            for r in results
         ]
         rules = "\n\n".join(f"[{r['article']}] {r['text']}" for r in state["retrieved_rules_text"])
         prompt = prompts.ANALYST.format(

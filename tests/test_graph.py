@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from src.agents import graph as graph_module
 from src.agents.graph import build_graph, memory_checkpointer
@@ -200,3 +200,25 @@ def test_follow_up_keeps_previous_race():
 
     assert state["race_context"]["session_key"] == 9523
     assert len([m for m in state["messages"] if isinstance(m, HumanMessage)]) == 2
+
+
+def test_fetch_prompt_stays_small_across_rounds():
+    """Groq's free tier rejects requests over ~7K input tokens; old tool results get shortened."""
+    router = Scripted(
+        [RouteDecision(mode="race", year=2024, place="Monaco", focus="f", regulation_queries=["q"])]
+    )
+    all_stints = [_tool_call("get_tyre_stints", {}, str(i)) for i in range(3)]
+    fetcher = Scripted(
+        [
+            AIMessage("", tool_calls=all_stints),
+            AIMessage("", tool_calls=all_stints[:1]),
+            AIMessage("done"),
+        ]
+    )
+    graph = _build(router, fetcher, Scripted([_analysis()]))
+    state = _ask(graph, "q")
+
+    third_call = fetcher.calls[2]
+    old_results = [m for m in third_call if isinstance(m, ToolMessage)][:3]
+    assert all(len(m.content) < 400 for m in old_results)
+    assert all(len(r["result"]) <= 2600 for r in state["fetched_telemetry_json"])
