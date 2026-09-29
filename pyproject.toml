@@ -1,0 +1,34 @@
+[project]
+name = "pitwall"
+version = "0.1.0"
+description = "Post-race F1 strategy review engine: LangGraph + hybrid RAG over FIA regs + OpenF1 telemetry"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph",
+    "langchain-core",
+    "langchain-groq",
+    "langchain-anthropic",
+    "qdrant-client[fastembed]",
+    "httpx",
+    "pydantic>=2",
+    "python-dotenv",
+    "pypdf",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+evals = ["deepeval"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
