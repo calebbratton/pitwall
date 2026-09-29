@@ -7,12 +7,13 @@ named constant and is reported with the calls, so they can be tuned against past
 
 from dataclasses import dataclass
 
+from src.livetiming.circuits import PitLoss
 from src.livetiming.snapshot import DriverState, RaceSnapshot
 
 # Assumptions (rules of thumb, not measurements):
 PIT_LANE_BYPASS_S = 5.0  # track time the pit lane replaces; loss = lane time - this
 DEFAULT_PIT_LANE_S = 22.0  # used until the session's own pit-lane times are known
-NEUTRALISED_LOSS_FACTOR = {"SAFETY_CAR": 0.5, "VSC": 0.65, "VSC_ENDING": 0.8}
+NEUTRALISED_LOSS_FACTOR = {"SAFETY_CAR": 0.5, "VSC": 0.65}  # fallback only; see circuits.py
 FRESH_TYRE_LAPS = 5  # stopped this recently: no point stopping again
 OLD_TYRE_LAPS = 15  # old enough that fresh tyres are worth a couple of places
 MAX_PLACES_FOR_OLD_TYRES = 2
@@ -114,29 +115,44 @@ def _call(
     return make("STAY OUT", f"Track position: pitting risks {risk_text}.", at_risk)
 
 
-def pit_calls(snapshot: RaceSnapshot) -> PitCallReport:
+def estimated_pit_loss(snapshot: RaceSnapshot) -> PitLoss:
+    """Rule-of-thumb loss from this session's pit-lane times, when no measured data exists."""
     lane_s = snapshot.median_pit_lane_s or DEFAULT_PIT_LANE_S
-    green_loss = lane_s - PIT_LANE_BYPASS_S
-    factor = NEUTRALISED_LOSS_FACTOR.get(snapshot.track_status, 1.0)
-    loss_now = green_loss * factor
+    green = lane_s - PIT_LANE_BYPASS_S
     lane_source = (
         f"median of {len(snapshot.pit_lane_times_s)} pit-lane times this session"
         if snapshot.pit_lane_times_s
-        else "default (no stops yet this session)"
+        else "default, no stops yet this session"
     )
+    return PitLoss(
+        green=green,
+        safety_car=green * NEUTRALISED_LOSS_FACTOR["SAFETY_CAR"],
+        vsc=green * NEUTRALISED_LOSS_FACTOR["VSC"],
+        source=(
+            f"estimated: pit lane {lane_s:.1f}s ({lane_source}) minus {PIT_LANE_BYPASS_S}s "
+            f"bypass, x{NEUTRALISED_LOSS_FACTOR['SAFETY_CAR']} under SC / "
+            f"x{NEUTRALISED_LOSS_FACTOR['VSC']} under VSC"
+        ),
+    )
+
+
+def pit_calls(snapshot: RaceSnapshot, pit_loss: PitLoss | None = None) -> PitCallReport:
+    """Calls for every driver. `pit_loss` should be the circuit's measured loss when known
+    (see circuits.py); otherwise it's estimated from this session's pit-lane times."""
+    loss = pit_loss or estimated_pit_loss(snapshot)
+    loss_now = loss.for_status(snapshot.track_status)
     return PitCallReport(
         track_status=snapshot.track_status,
         lap=snapshot.current_lap,
         laps_remaining=snapshot.laps_remaining,
-        green_pit_loss_s=round(green_loss, 1),
+        green_pit_loss_s=round(loss.green, 1),
         pit_loss_now_s=round(loss_now, 1),
-        calls=tuple(_call(d, snapshot, loss_now, green_loss) for d in snapshot.drivers),
+        calls=tuple(_call(d, snapshot, loss_now, loss.green) for d in snapshot.drivers),
         assumptions=(
             (
-                f"Pit lane time {lane_s:.1f}s ({lane_source}) minus {PIT_LANE_BYPASS_S}s bypass "
-                f"= {green_loss:.1f}s loss under green."
+                f"Pit loss {loss_now:.1f}s under {snapshot.track_status} vs {loss.green:.1f}s "
+                f"under green ({loss.source})."
             ),
-            f"{snapshot.track_status} multiplies the loss by {factor} -> {loss_now:.1f}s.",
             "Places at risk assumes the cars behind stay out.",
             f"Fresh tyres: <= {FRESH_TYRE_LAPS} laps; old tyres: >= {OLD_TYRE_LAPS} laps.",
         ),

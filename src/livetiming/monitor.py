@@ -11,17 +11,18 @@ Events (dicts with a "type"):
   radio_transcript {url, tla, text}                                   when a clip's text is ready
   pit_calls     {report}                                             when a SC / VSC starts
   snapshot      {lap, total_laps, status, clock, drivers:[...]}      throttled by the driver
-  track         {points: [[x, y]...], bounds: [minx, miny, maxx, maxy]}   once, before playback
+  track         {source, points, bounds, rotation?, corners?, marshal_sectors?}  once, first
   positions     {utc, cars: [{number, tla, x, y, status}]}           ~4/s wall clock (replay)
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict
 from datetime import timedelta
 from typing import Any, Protocol
 
 from src.livetiming.archive import STATIC, STRATEGY_TOPICS, ArchiveSession, Message
+from src.livetiming.circuits import Circuit, PitLoss, fetch_circuit
 from src.livetiming.snapshot import TRACK_STATUS, RaceSnapshot, build_snapshot
 from src.livetiming.state import TimingState
 from src.livetiming.strategy import pit_calls
@@ -60,9 +61,10 @@ def snapshot_event(snap: RaceSnapshot) -> dict[str, Any]:
 
 
 class RaceMonitor:
-    def __init__(self, radio_base_url: str | None = None) -> None:
+    def __init__(self, radio_base_url: str | None = None, pit_loss: PitLoss | None = None) -> None:
         self.state = TimingState()
         self._radio_base = radio_base_url  # clip paths are relative to the session folder
+        self.pit_loss = pit_loss  # measured for this circuit when known; else estimated
         self._status: str | None = None
         self._session_sent = False
         self._race_control_seen = 0
@@ -118,7 +120,8 @@ class RaceMonitor:
                 snap = self.snapshot()
                 events.append({"type": "track_status", "status": status, "lap": snap.current_lap})
                 if status in NEUTRALISED and self._status not in NEUTRALISED:
-                    events.append({"type": "pit_calls", "report": asdict(pit_calls(snap))})
+                    report = pit_calls(snap, self.pit_loss)
+                    events.append({"type": "pit_calls", "report": asdict(report)})
                 self._status = status
 
         if message.topic == "RaceControlMessages":
@@ -163,6 +166,17 @@ class RaceMonitor:
         return [name] if name else []
 
 
+def _circuit_for(messages: list[Message]) -> Circuit | None:
+    """MultiViewer circuit data for the session's circuit key and season."""
+    info = next((m.data for m in messages if m.topic == "SessionInfo"), None)
+    try:
+        key = int(info["Meeting"]["Circuit"]["Key"])
+        year = int(str(info["StartDate"])[:4])
+    except (TypeError, KeyError, ValueError):
+        return None
+    return fetch_circuit(key, year)
+
+
 def _lap_count(message: Message) -> int | None:
     if message.topic == "LapCount":
         return message.data.get("CurrentLap")
@@ -182,6 +196,7 @@ async def replay(
     transcriber: Transcriber | None = None,
     transcript_wait_s: float = 30.0,
     positions_every_s: float = 0.25,
+    circuit_loader: Callable[[list[Message]], Circuit | None] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Play an archived session as if live. Messages before `from_lap` are applied instantly
     (their events are dropped, except `session`); afterwards the original timing is kept,
@@ -192,6 +207,7 @@ async def replay(
     transcribed in the background and delivered as `radio_transcript` events, so the race feed
     never waits on speech recognition."""
     monitor = RaceMonitor(radio_base_url=f"{STATIC}/{session.path}")
+    load_circuit = circuit_loader or _circuit_for
     fast_forward = from_lap is not None
     previous: timedelta | None = None
     loop = asyncio.get_running_loop()
@@ -225,9 +241,12 @@ async def replay(
 
     # Downloading/parsing the archive is blocking I/O; keep it off the event loop.
     messages = await asyncio.to_thread(lambda: list(session.messages(REPLAY_TOPICS)))
-    outline = await asyncio.to_thread(track_outline, messages)
-    if outline:
-        yield {"type": "track", **outline}
+    circuit = await asyncio.to_thread(load_circuit, messages)
+    if circuit:
+        monitor.pit_loss = circuit.pit_loss
+        yield circuit.track_event()
+    elif outline := await asyncio.to_thread(track_outline, messages):
+        yield {"type": "track", "source": "traced", **outline}
     last_positions = 0.0
     try:
         for message in messages:
