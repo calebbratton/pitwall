@@ -1,43 +1,63 @@
 """Chat-model factory. The only module that imports provider packages."""
 
 import os
+from typing import Literal
 
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.runnables import Runnable
+from pydantic import BaseModel
 
 load_dotenv()
 
-# Check https://console.groq.com/docs/models — Groq rotates models often.
-DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"  # preview model; tool use + reasoning
-DEFAULT_MAX_TOKENS = 2048
+Role = Literal["router", "fetcher", "analyst", "judge"]
+
+# Groq free-tier rate limits are per model, so giving each role its own model multiplies the
+# budget. The judge is a different model family from the analyst it grades, which reduces
+# self-preference bias. Check https://console.groq.com/docs/models — Groq rotates models often.
+GROQ_DEFAULTS: dict[Role, str] = {
+    "router": "openai/gpt-oss-20b",
+    "fetcher": "qwen/qwen3.8-27b",  # makes parallel tool calls; gpt-oss-20b calls one at a time
+    "analyst": "openai/gpt-oss-120b",
+    "judge": "qwen/qwen3.8-27b",
+}
+DEFAULT_MAX_TOKENS = 4096  # reasoning tokens count toward this on reasoning models
 
 
 class LLMConfigError(RuntimeError):
     pass
 
 
-def get_chat_model(temperature: float = 0.0, max_tokens: int = DEFAULT_MAX_TOKENS) -> BaseChatModel:
-    provider = os.getenv("LLM_PROVIDER", "groq").strip().lower()
-    model = os.getenv("LLM_MODEL", "").strip()
+def _env(name: str) -> str:
+    # `.env` lines like `LLM_PROVIDER=` load as empty strings; treat those as unset.
+    return os.getenv(name, "").strip()
+
+
+def get_chat_model(
+    role: Role = "analyst", temperature: float = 0.0, max_tokens: int = DEFAULT_MAX_TOKENS
+) -> BaseChatModel:
+    """Model for a graph role. Override per role with LLM_MODEL_<ROLE>, or all roles with
+    LLM_MODEL."""
+    provider = (_env("LLM_PROVIDER") or "groq").lower()
+    model = _env(f"LLM_MODEL_{role.upper()}") or _env("LLM_MODEL")
 
     if provider == "groq":
-        if not os.getenv("GROQ_API_KEY"):
+        if not _env("GROQ_API_KEY"):
             raise LLMConfigError(
                 "GROQ_API_KEY is not set. Get a free key at console.groq.com/keys."
             )
         from langchain_groq import ChatGroq
 
-        return ChatGroq(
-            model=model or DEFAULT_GROQ_MODEL,
-            temperature=temperature,
-            max_tokens=max_tokens,
+        model = model or GROQ_DEFAULTS[role]
+        extra = {}
+        if model.startswith("qwen/"):
             # Keep <think> text out of message content; "raw" is rejected with tool use.
-            reasoning_format="parsed",
-        )
+            extra["reasoning_format"] = "parsed"
+        return ChatGroq(model=model, temperature=temperature, max_tokens=max_tokens, **extra)
 
     if provider == "anthropic":
         # Paid provider: explicit opt-in only. No default model, no fallback.
-        if not os.getenv("ANTHROPIC_API_KEY"):
+        if not _env("ANTHROPIC_API_KEY"):
             raise LLMConfigError("LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set.")
         if not model:
             raise LLMConfigError("LLM_PROVIDER=anthropic requires LLM_MODEL to be set explicitly.")
@@ -46,3 +66,15 @@ def get_chat_model(temperature: float = 0.0, max_tokens: int = DEFAULT_MAX_TOKEN
         return ChatAnthropic(model=model, max_tokens=max_tokens)
 
     raise LLMConfigError(f"Unknown LLM_PROVIDER {provider!r}; expected 'groq' or 'anthropic'.")
+
+
+def with_schema(model: BaseChatModel, schema: type[BaseModel]) -> Runnable:
+    """Structured output using the most reliable method for the model's provider."""
+    from langchain_groq import ChatGroq
+
+    if isinstance(model, ChatGroq):
+        # Groq's tool-call route fails hard when the model answers in prose instead
+        # ("Tool choice is required, but model did not call a tool"); JSON-schema mode
+        # constrains the output itself.
+        return model.with_structured_output(schema, method="json_schema")
+    return model.with_structured_output(schema)

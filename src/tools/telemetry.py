@@ -1,0 +1,181 @@
+"""LLM-facing telemetry tools, bound to one race session.
+
+Design constraints (Groq free tier: 8K tokens/minute per model):
+- Outputs are compact JSON; lap-by-lap requests are capped, and `get_pace_summary` does the
+  number-crunching in Python so the model reasons over a few statistics, not 78 rows.
+- Tool arguments are validated, never trusted: models sometimes leak reasoning into arguments
+  ("Liddle? Actually Lando Norris"). Invalid input returns an error message listing valid
+  options so the model can retry, rather than raising.
+"""
+
+import json
+import statistics
+import unicodedata
+from typing import Any
+
+from langchain_core.tools import BaseTool, tool
+
+from src.tools.models import Driver, Lap, Session
+from src.tools.openf1 import OpenF1Client
+
+MAX_LAPS_PER_CALL = 20
+MAX_RACE_CONTROL_MESSAGES = 40
+# Laps slower than this multiple of the median are treated as non-representative
+# (safety car, VSC, red flag, in-laps, traffic incidents) and excluded from pace statistics.
+SLOW_LAP_FACTOR = 1.07
+
+
+def _json(data: Any) -> str:
+    return json.dumps(data, separators=(",", ":"))
+
+
+def _fold(s: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", s.strip().casefold())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+def representative_laps(laps: list[Lap]) -> list[Lap]:
+    """Timed green-flag laps: drops lap 1, pit-out laps, and laps > SLOW_LAP_FACTOR x median."""
+    timed = [
+        lap for lap in laps if lap.lap_duration and lap.lap_number > 1 and not lap.is_pit_out_lap
+    ]
+    if not timed:
+        return []
+    median = statistics.median(lap.lap_duration for lap in timed)
+    return [lap for lap in timed if lap.lap_duration <= median * SLOW_LAP_FACTOR]
+
+
+def pace_summary(laps: list[Lap]) -> dict[str, Any]:
+    clean = representative_laps(laps)
+    summary: dict[str, Any] = {
+        "laps_requested": len(laps),
+        "laps_used": len(clean),
+        "laps_excluded": sorted({lap.lap_number for lap in laps} - {l.lap_number for l in clean}),
+    }
+    if not clean:
+        return summary
+    times = [lap.lap_duration for lap in clean]
+    summary |= {
+        "mean_s": round(statistics.fmean(times), 3),
+        "median_s": round(statistics.median(times), 3),
+        "best_s": min(times),
+        "best_lap": min(clean, key=lambda lap: lap.lap_duration).lap_number,
+    }
+    if len(clean) >= 3:
+        fit = statistics.linear_regression([lap.lap_number for lap in clean], times)
+        # Positive = getting slower per lap. Includes fuel burn-off (makes cars faster), so it
+        # understates true tyre degradation.
+        summary["trend_s_per_lap"] = round(fit.slope, 4)
+    return summary
+
+
+_KEY_EVENT_WORDS = ("RED FLAG", "SAFETY CAR", "SUSPENDED", "RESUME", "CHEQUERED")
+
+
+def key_race_events(client: OpenF1Client, session_key: int) -> str:
+    """Red flags, safety cars, VSCs, suspensions and the finish: the events that reshape
+    strategy. Fetched deterministically for every race question rather than left to the LLM."""
+    events = [
+        [m.lap_number, m.message]
+        for m in client.get_race_control(session_key)
+        if m.flag in ("RED", "CHEQUERED")
+        or m.category == "SafetyCar"
+        or any(word in m.message.upper() for word in _KEY_EVENT_WORDS)
+    ]
+    return _json(events)
+
+
+def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTool]:
+    sk = session.session_key
+    drivers: list[Driver] = client.get_drivers(sk)
+
+    def resolve(driver: str) -> Driver | str:
+        key = _fold(str(driver))
+        for d in drivers:
+            names = {str(d.driver_number), d.name_acronym, d.full_name, d.full_name.split()[-1]}
+            if key in {_fold(n) for n in names}:
+                return d
+        valid = ", ".join(f"{d.name_acronym} (#{d.driver_number})" for d in drivers)
+        return f"ERROR: unknown driver {driver!r}. Use a number, acronym or surname: {valid}"
+
+    @tool
+    def list_drivers(team: str | None = None) -> str:
+        """List drivers in this race (number, acronym, name, team). Optionally filter by team
+        name, e.g. "McLaren"."""
+        rows = [d for d in drivers if not team or _fold(team) in _fold(d.team_name or "")]
+        if not rows:
+            teams = sorted({d.team_name for d in drivers if d.team_name})
+            return f"ERROR: no team matching {team!r}. Teams: {', '.join(teams)}"
+        return _json([[d.driver_number, d.name_acronym, d.full_name, d.team_name] for d in rows])
+
+    @tool
+    def get_tyre_stints(driver: str | None = None) -> str:
+        """Tyre stints: compound, first and last lap, tyre age at stint start. One driver
+        (number, acronym or surname) or all drivers if omitted."""
+        number = None
+        if driver:
+            d = resolve(driver)
+            if isinstance(d, str):
+                return d
+            number = d.driver_number
+        stints = client.get_stints(sk, number)
+        acronyms = {d.driver_number: d.name_acronym for d in drivers}
+        return _json(
+            [
+                {
+                    "driver": acronyms.get(s.driver_number, s.driver_number),
+                    "stint": s.stint_number,
+                    "compound": s.compound,
+                    "laps": [s.lap_start, s.lap_end],
+                    "tyre_age_at_start": s.tyre_age_at_start,
+                }
+                for s in stints
+            ]
+        )
+
+    @tool
+    def get_lap_times(driver: str, lap_start: int, lap_end: int) -> str:
+        """Lap-by-lap times in seconds for one driver, at most 20 laps per call.
+        Rows are [lap, lap_time_s, is_pit_out_lap]. Prefer get_pace_summary for long ranges."""
+        d = resolve(driver)
+        if isinstance(d, str):
+            return d
+        laps = client.get_laps(sk, d.driver_number, lap_start, lap_end)
+        if len(laps) > MAX_LAPS_PER_CALL:
+            # Don't waste a tool round on an error: answer with the summary instead.
+            note = f"{len(laps)} laps exceeds {MAX_LAPS_PER_CALL}; returning pace summary instead"
+            return _json(
+                {"note": note, "driver": d.name_acronym, "laps": [lap_start, lap_end]}
+                | pace_summary(laps)
+            )
+        return _json([[lap.lap_number, lap.lap_duration, lap.is_pit_out_lap] for lap in laps])
+
+    @tool
+    def get_pace_summary(driver: str, lap_start: int, lap_end: int) -> str:
+        """Pace statistics for one driver over a lap range: mean, median, best lap, and lap-time
+        trend (seconds per lap; positive = slowing, i.e. degradation). Excludes lap 1, pit-out
+        laps and laps >7% slower than the median (safety car, VSC, red flag, in-laps)."""
+        d = resolve(driver)
+        if isinstance(d, str):
+            return d
+        laps = client.get_laps(sk, d.driver_number, lap_start, lap_end)
+        return _json({"driver": d.name_acronym, "laps": [lap_start, lap_end]} | pace_summary(laps))
+
+    @tool
+    def get_race_control(
+        lap_start: int | None = None, lap_end: int | None = None, category: str | None = None
+    ) -> str:
+        """Race control messages: flags, safety car, VSC, red flags, penalties, pit exit status.
+        Optional lap range and category ("Flag", "SafetyCar", "Other"). Blue flags omitted."""
+        msgs = [
+            m
+            for m in client.get_race_control(sk, lap_start, lap_end, category)
+            if m.flag != "BLUE" and m.category != "Drs"
+        ]
+        rows = [[m.lap_number, m.category, m.flag, m.message] for m in msgs]
+        if len(rows) > MAX_RACE_CONTROL_MESSAGES:
+            note = f"TRUNCATED: {len(rows)} messages; narrow the lap range or category."
+            return _json(rows[:MAX_RACE_CONTROL_MESSAGES] + [note])
+        return _json(rows)
+
+    return [list_drivers, get_tyre_stints, get_lap_times, get_pace_summary, get_race_control]

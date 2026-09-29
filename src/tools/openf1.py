@@ -59,6 +59,12 @@ class OpenF1Client(ABC):
         known = ", ".join(sorted({s.location for s in sessions})) or "none"
         raise OpenF1Error(f"No {year} {session_name} found for {place!r}. Known locations: {known}")
 
+    def get_session_by_key(self, session_key: int) -> Session:
+        rows = self._fetch("sessions", {"session_key": session_key})
+        if not rows:
+            raise OpenF1Error(f"No session with key {session_key}.")
+        return Session.model_validate(rows[0])
+
     def get_drivers(self, session_key: int, team_name: str | None = None) -> list[Driver]:
         params: Params = {"session_key": session_key}
         if team_name:

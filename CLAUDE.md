@@ -14,7 +14,7 @@ hosted (the dev machine is too weak for local models); everything else runs loca
 |-----------------|------------------------------------------------------------------------|
 | Language        | Python 3.11+ (managed with `uv`; system Python is 3.9, don't use it)   |
 | Orchestration   | LangGraph (stateful graph; Route → Fetch → Retrieve → Analyze → Synthesize) |
-| LLM             | Provider-agnostic via `src/llm/` factory. Default: **Groq** (free tier) with `qwen/qwen3.8-27b` (a Groq *preview* model — may be pulled at short notice; override via `LLM_MODEL`). Optional: Anthropic. No local LLMs — dev machine can't run them |
+| LLM             | Provider-agnostic via `src/llm/factory.py`. Default: **Groq** free tier, one model per role (see below). Optional: Anthropic. No local LLMs — dev machine can't run them |
 | Vector store    | Qdrant in **embedded/local mode** (`QdrantClient(path=...)`), no server |
 | Embeddings      | Local via `fastembed` (dense + BM25 sparse for hybrid search), no API cost |
 | Structured data | OpenF1 REST API (free, no key) — `/stints`, `/laps`, `/race_control`   |
@@ -40,6 +40,26 @@ The graph state is a `TypedDict` with at least:
 `current_query`, `race_context` (year, meeting_key, session_key), `fetched_telemetry_json`,
 `retrieved_rules_text`, `evaluation_steps`. Nodes return partial state updates; never mutate
 state in place.
+
+## Graph (`src/agents/graph.py`)
+
+`route → resolve → fetch ⇄ tools → retrieve → analyze → synthesize`, with a `rules` path that
+skips telemetry and an error path (ambiguous/future race) straight to `synthesize`.
+
+- LLM nodes: `route` (router), `fetch` (fetcher, tool calling), `analyze` (analyst). Everything
+  else is deterministic on purpose: `resolve` maps year/place → OpenF1 session + regs issue,
+  key race events (red flags, SC, VSC) are always fetched in code, and `synthesize` renders the
+  answer from the structured `Analysis` and **drops citations of articles that weren't retrieved**.
+- Groq models per role (`GROQ_DEFAULTS`): router `gpt-oss-20b`, fetcher `qwen3.8-27b` (the only
+  one that makes parallel tool calls), analyst `gpt-oss-120b`, judge `qwen3.8-27b`. Free-tier
+  limits are per model (8K tokens/min each), so splitting roles multiplies the budget.
+- Use `with_schema()` for structured output, not `with_structured_output()` directly: Groq's
+  tool-call route 400s when the model answers in prose.
+- Fetch is capped at `MAX_FETCH_ROUNDS`. Telemetry tools validate every argument and return
+  `ERROR: ...` strings (with valid options) instead of raising, so the model can retry.
+- Chat memory: `memory_checkpointer()` (in-process). `messages` and `race_context` persist across
+  turns; per-question fields are reset by `route`.
+- Tests use scripted fake models (`tests/test_graph.py`); never call a real LLM in `tests/`.
 
 ## Regulations (RAG)
 
@@ -85,6 +105,7 @@ uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e ".[dev]"
 python scripts/ingest_regulations.py   # download + chunk + index FIA regs (~minutes)
 python scripts/record_fixtures.py --year 2024 --place Monaco --drivers 4 81 16
+python -m src.chat --trace            # chat in the terminal (uses Groq)
 pytest tests --ignore=tests/evals      # fast, offline
 pytest tests/evals                     # benchmark suite, calls the LLM
 ```
@@ -92,7 +113,7 @@ pytest tests/evals                     # benchmark suite, calls the LLM
 ## Environment variables
 
 - `LLM_PROVIDER` — `groq` (default) | `anthropic`
-- `LLM_MODEL` — model id for the chosen provider
+- `LLM_MODEL` — model id for all roles; `LLM_MODEL_<ROLE>` (ROUTER/FETCHER/ANALYST/JUDGE) overrides one role
 - `GROQ_API_KEY` — required for the default provider
 - `ANTHROPIC_API_KEY` — **not configured yet, on purpose** (avoiding accidental charges). Never
   default to, fall back to, or silently switch to Anthropic; it must be an explicit opt-in via
