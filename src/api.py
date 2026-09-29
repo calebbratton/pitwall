@@ -28,7 +28,9 @@ from src.rag.index import RegulationIndex
 from src.tools.openf1 import HttpOpenF1Client
 
 log = logging.getLogger(__name__)
-UI_ORIGINS = os.getenv("PITWALL_UI_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+UI_ORIGINS = os.getenv("PITWALL_UI_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(
+    ","
+)
 
 
 class ChatRequest(BaseModel):

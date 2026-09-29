@@ -1,0 +1,707 @@
+{
+ "clock": "1:39:25.207000",
+ "pit_lane_times": [
+  {
+   "racing_number": "23",
+   "duration_s": 22.8,
+   "lap": 10
+  },
+  {
+   "racing_number": "18",
+   "duration_s": 23.0,
+   "lap": 11
+  },
+  {
+   "racing_number": "2",
+   "duration_s": 22.6,
+   "lap": 11
+  },
+  {
+   "racing_number": "77",
+   "duration_s": 23.7,
+   "lap": 11
+  },
+  {
+   "racing_number": "27",
+   "duration_s": 23.0,
+   "lap": 12
+  },
+  {
+   "racing_number": "10",
+   "duration_s": 22.4,
+   "lap": 12
+  },
+  {
+   "racing_number": "11",
+   "duration_s": 21.6,
+   "lap": 17
+  },
+  {
+   "racing_number": "16",
+   "duration_s": 21.8,
+   "lap": 19
+  },
+  {
+   "racing_number": "31",
+   "duration_s": 22.6,
+   "lap": 22
+  },
+  {
+   "racing_number": "14",
+   "duration_s": 22.3,
+   "lap": 22
+  },
+  {
+   "racing_number": "20",
+   "duration_s": 23.2,
+   "lap": 22
+  },
+  {
+   "racing_number": "1",
+   "duration_s": 22.1,
+   "lap": 23
+  },
+  {
+   "racing_number": "63",
+   "duration_s": 22.8,
+   "lap": 24
+  },
+  {
+   "racing_number": "44",
+   "duration_s": 22.1,
+   "lap": 26
+  },
+  {
+   "racing_number": "81",
+   "duration_s": 22.2,
+   "lap": 27
+  },
+  {
+   "racing_number": "55",
+   "duration_s": 22.8,
+   "lap": 27
+  }
+ ],
+ "topics": {
+  "SessionInfo": {
+   "Name": "Race",
+   "Meeting": {
+    "Name": "Miami Grand Prix"
+   }
+  },
+  "TrackStatus": {
+   "Status": "4",
+   "Message": "SCDeployed"
+  },
+  "LapCount": {
+   "CurrentLap": 28,
+   "TotalLaps": 57
+  },
+  "DriverList": {
+   "1": {
+    "Tla": "VER",
+    "TeamName": "Red Bull Racing"
+   },
+   "16": {
+    "Tla": "LEC",
+    "TeamName": "Ferrari"
+   },
+   "55": {
+    "Tla": "SAI",
+    "TeamName": "Ferrari"
+   },
+   "11": {
+    "Tla": "PER",
+    "TeamName": "Red Bull Racing"
+   },
+   "4": {
+    "Tla": "NOR",
+    "TeamName": "McLaren"
+   },
+   "81": {
+    "Tla": "PIA",
+    "TeamName": "McLaren"
+   },
+   "63": {
+    "Tla": "RUS",
+    "TeamName": "Mercedes"
+   },
+   "44": {
+    "Tla": "HAM",
+    "TeamName": "Mercedes"
+   },
+   "27": {
+    "Tla": "HUL",
+    "TeamName": "Haas F1 Team"
+   },
+   "22": {
+    "Tla": "TSU",
+    "TeamName": "RB"
+   },
+   "18": {
+    "Tla": "STR",
+    "TeamName": "Aston Martin"
+   },
+   "10": {
+    "Tla": "GAS",
+    "TeamName": "Alpine"
+   },
+   "31": {
+    "Tla": "OCO",
+    "TeamName": "Alpine"
+   },
+   "23": {
+    "Tla": "ALB",
+    "TeamName": "Williams"
+   },
+   "14": {
+    "Tla": "ALO",
+    "TeamName": "Aston Martin"
+   },
+   "77": {
+    "Tla": "BOT",
+    "TeamName": "Kick Sauber"
+   },
+   "2": {
+    "Tla": "SAR",
+    "TeamName": "Williams"
+   },
+   "20": {
+    "Tla": "MAG",
+    "TeamName": "Haas F1 Team"
+   },
+   "24": {
+    "Tla": "ZHO",
+    "TeamName": "Kick Sauber"
+   },
+   "3": {
+    "Tla": "RIC",
+    "TeamName": "RB"
+   }
+  },
+  "TimingData": {
+   "Lines": {
+    "1": {
+     "GapToLeader": "+11.392",
+     "IntervalToPositionAhead": {
+      "Value": "+11.392",
+      "Catching": true
+     },
+     "Position": "2",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "16": {
+     "GapToLeader": "+14.148",
+     "IntervalToPositionAhead": {
+      "Value": "+2.756",
+      "Catching": true
+     },
+     "Position": "3",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "55": {
+     "GapToLeader": "+18.188",
+     "IntervalToPositionAhead": {
+      "Value": "+2.882",
+      "Catching": false
+     },
+     "Position": "5",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "11": {
+     "GapToLeader": "+23.146",
+     "IntervalToPositionAhead": {
+      "Value": "+4.953",
+      "Catching": false
+     },
+     "Position": "6",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "4": {
+     "GapToLeader": "LAP 28",
+     "IntervalToPositionAhead": {
+      "Value": "LAP 28",
+      "Catching": true
+     },
+     "Position": "1",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27
+    },
+    "81": {
+     "GapToLeader": "+15.306",
+     "IntervalToPositionAhead": {
+      "Value": "+1.178",
+      "Catching": true
+     },
+     "Position": "4",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "63": {
+     "GapToLeader": "+41.174",
+     "IntervalToPositionAhead": {
+      "Value": "+2.325",
+      "Catching": false
+     },
+     "Position": "10",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "44": {
+     "GapToLeader": "+38.500",
+     "IntervalToPositionAhead": {
+      "Value": "",
+      "Catching": false
+     },
+     "Position": "8",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "27": {
+     "GapToLeader": "+48.359",
+     "IntervalToPositionAhead": {
+      "Value": "+0.908",
+      "Catching": false
+     },
+     "Position": "15",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "22": {
+     "GapToLeader": "+26.704",
+     "IntervalToPositionAhead": {
+      "Value": "+3.514",
+      "Catching": false
+     },
+     "Position": "7",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27
+    },
+    "18": {
+     "GapToLeader": "+49.494",
+     "IntervalToPositionAhead": {
+      "Value": "+1.135",
+      "Catching": true
+     },
+     "Position": "16",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "10": {
+     "GapToLeader": "+47.451",
+     "IntervalToPositionAhead": {
+      "Value": "+2.798",
+      "Catching": false
+     },
+     "Position": "14",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "31": {
+     "GapToLeader": "+43.206",
+     "IntervalToPositionAhead": {
+      "Value": "+0.572",
+      "Catching": false
+     },
+     "Position": "12",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "23": {
+     "GapToLeader": "+50.588",
+     "IntervalToPositionAhead": {
+      "Value": "+1.018",
+      "Catching": false
+     },
+     "Position": "17",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "14": {
+     "GapToLeader": "+44.549",
+     "IntervalToPositionAhead": {
+      "Value": "+1.343",
+      "Catching": true
+     },
+     "Position": "13",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "77": {
+     "GapToLeader": "+57.281",
+     "IntervalToPositionAhead": {
+      "Value": "+6.583",
+      "Catching": false
+     },
+     "Position": "18",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "2": {
+     "GapToLeader": "+51.792",
+     "IntervalToPositionAhead": {
+      "Value": "",
+      "Catching": false
+     },
+     "Position": "20",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "20": {
+     "GapToLeader": "+72.119",
+     "IntervalToPositionAhead": {
+      "Value": "+15.443",
+      "Catching": false
+     },
+     "Position": "19",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27,
+     "NumberOfPitStops": 1
+    },
+    "24": {
+     "GapToLeader": "+38.849",
+     "IntervalToPositionAhead": {
+      "Value": "+0.349",
+      "Catching": false
+     },
+     "Position": "9",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27
+    },
+    "3": {
+     "GapToLeader": "+42.634",
+     "IntervalToPositionAhead": {
+      "Value": "+1.416",
+      "Catching": false
+     },
+     "Position": "11",
+     "Retired": false,
+     "InPit": false,
+     "Stopped": false,
+     "NumberOfLaps": 27
+    }
+   }
+  },
+  "TimingAppData": {
+   "Lines": {
+    "1": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 23
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 4
+      }
+     ]
+    },
+    "16": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 19
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 8
+      }
+     ]
+    },
+    "55": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 27
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 0
+      }
+     ]
+    },
+    "11": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 17
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 10
+      }
+     ]
+    },
+    "4": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 27
+      }
+     ]
+    },
+    "81": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 27
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 0
+      }
+     ]
+    },
+    "63": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "false",
+       "TotalLaps": 27
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 3
+      }
+     ]
+    },
+    "44": {
+     "Stints": [
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 26
+      },
+      {
+       "Compound": "MEDIUM",
+       "New": "false",
+       "TotalLaps": 4
+      }
+     ]
+    },
+    "27": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 12
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 15
+      }
+     ]
+    },
+    "22": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 27
+      }
+     ]
+    },
+    "18": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "false",
+       "TotalLaps": 11
+      },
+      {
+       "Compound": "HARD",
+       "New": "false",
+       "TotalLaps": 17
+      }
+     ]
+    },
+    "10": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 12
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 15
+      }
+     ]
+    },
+    "31": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 22
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 5
+      }
+     ]
+    },
+    "23": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 10
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 17
+      }
+     ]
+    },
+    "14": {
+     "Stints": [
+      {
+       "Compound": "HARD",
+       "New": "false",
+       "TotalLaps": 23
+      },
+      {
+       "Compound": "MEDIUM",
+       "New": "false",
+       "TotalLaps": 6
+      }
+     ]
+    },
+    "77": {
+     "Stints": [
+      {
+       "Compound": "SOFT",
+       "New": "true",
+       "TotalLaps": 11
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 16
+      }
+     ]
+    },
+    "2": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 11
+      },
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 16
+      }
+     ]
+    },
+    "20": {
+     "Stints": [
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 22
+      },
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 5
+      }
+     ]
+    },
+    "24": {
+     "Stints": [
+      {
+       "Compound": "MEDIUM",
+       "New": "true",
+       "TotalLaps": 27
+      }
+     ]
+    },
+    "3": {
+     "Stints": [
+      {
+       "Compound": "HARD",
+       "New": "true",
+       "TotalLaps": 27
+      }
+     ]
+    }
+   }
+  }
+ }
+}
