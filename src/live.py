@@ -10,6 +10,7 @@ import asyncio
 
 from src.livetiming.archive import ArchiveSession, find_session
 from src.livetiming.monitor import replay
+from src.llm.transcribe import RadioTranscriber
 
 COLOURS = {"SAFETY_CAR": "\033[33m", "VSC": "\033[33m", "RED_FLAG": "\033[31m", "GREEN": "\033[32m"}
 RESET, DIM, BOLD = "\033[0m", "\033[2m", "\033[1m"
@@ -54,12 +55,20 @@ async def main() -> None:
     ap.add_argument("--session", default="Race")
     ap.add_argument("--speed", type=float, default=20.0, help="replay speed multiplier")
     ap.add_argument("--from-lap", type=int, default=None, help="fast-forward to this lap")
+    ap.add_argument("--no-transcribe", action="store_true", help="skip team radio transcription")
     args = ap.parse_args()
+    transcriber = (
+        None if args.no_transcribe or not RadioTranscriber.available() else RadioTranscriber()
+    )
 
+    if transcriber is None:
+        print(f"{DIM}Team radio transcription is off (--no-transcribe or no GROQ_API_KEY).{RESET}")
     session = ArchiveSession(find_session(args.year, args.meeting, args.session))
     print(f"{DIM}Replaying {session.path} at {args.speed}x (downloads on first run)...{RESET}")
     last_lap = None
-    async for event in replay(session, speed=args.speed, from_lap=args.from_lap):
+    async for event in replay(
+        session, speed=args.speed, from_lap=args.from_lap, transcriber=transcriber
+    ):
         kind = event["type"]
         if kind == "session":
             print(
@@ -76,7 +85,13 @@ async def main() -> None:
                 continue
             print(f"  {DIM}[RC lap {event['lap']}] {event['message']}{RESET}")
         elif kind == "radio":
-            print(f"  {DIM}📻 {event['tla']} team radio: {event['url']}{RESET}")
+            if event.get("text") is not None:
+                text = f'"{event["text"] or "(no speech)"}"'
+            else:
+                text = "(transcribing...)" if transcriber else event["url"]
+            print(f"  📻 {BOLD}{event['tla']}{RESET} team radio: {text}")
+        elif kind == "radio_transcript":
+            print(f'  📻 {BOLD}{event["tla"]}{RESET}: "{event["text"] or "(no speech)"}"')
         elif kind == "pit_calls":
             _print_pit_calls(event["report"])
         elif kind == "end":

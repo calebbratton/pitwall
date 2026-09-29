@@ -33,7 +33,7 @@ def _client(router, fetcher, analyst) -> TestClient:
         )
         return graph, lambda: None
 
-    return TestClient(create_app(make_graph))
+    return TestClient(create_app(make_graph, make_transcriber=lambda: None))
 
 
 def test_health():

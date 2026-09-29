@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from src.agents.graph import build_graph, memory_checkpointer
 from src.livetiming.archive import ArchiveSession, list_sessions
 from src.livetiming.monitor import replay
+from src.llm.transcribe import RadioTranscriber
 from src.rag.index import RegulationIndex
 from src.tools.openf1 import HttpOpenF1Client
 
@@ -83,16 +84,25 @@ def _default_graph():
     return graph, index.close
 
 
+def _default_transcriber() -> RadioTranscriber | None:
+    return RadioTranscriber() if RadioTranscriber.available() else None
+
+
 def create_app(
     make_graph: Callable[[], tuple[Any, Callable[[], None]]] = _default_graph,
+    make_transcriber: Callable[[], Any] = _default_transcriber,
 ) -> FastAPI:
-    """make_graph returns (compiled graph, cleanup). Tests inject a graph with fake models."""
+    """make_graph returns (compiled graph, cleanup). Tests inject a graph with fake models and
+    no transcriber."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.graph, cleanup = make_graph()
+        app.state.transcriber = make_transcriber()
         yield
         cleanup()
+        if app.state.transcriber:
+            await app.state.transcriber.aclose()
 
     app = FastAPI(title="Pit Wall AI", lifespan=lifespan)
     app.add_middleware(
@@ -144,16 +154,22 @@ def live_sessions(year: int) -> list[dict[str, str]]:
 
 
 def live_replay(
+    request: Request,
     path: str,
     speed: float = Query(20.0, gt=0, le=1000),
     from_lap: int | None = Query(None, ge=1),
+    transcribe: bool = True,
 ) -> StreamingResponse:
     """Replay an archived race as if live (SSE, GET so EventSource works). Event names are the
-    monitor's event types: session, snapshot, track_status, race_control, radio, pit_calls, end."""
+    monitor's event types: session, snapshot, track_status, race_control, radio,
+    radio_transcript, pit_calls, end."""
+    transcriber = request.app.state.transcriber if transcribe else None
 
     async def events() -> AsyncIterator[str]:
         try:
-            async for event in replay(ArchiveSession(path), speed=speed, from_lap=from_lap):
+            async for event in replay(
+                ArchiveSession(path), speed=speed, from_lap=from_lap, transcriber=transcriber
+            ):
                 yield _sse(event["type"], event)
         except Exception as e:
             log.exception("replay failed")

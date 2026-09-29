@@ -69,6 +69,31 @@ skips telemetry and an error path (ambiguous/future race) straight to `synthesiz
   together. CORS origins via `PITWALL_UI_ORIGINS` (default `http://localhost:5173`).
 - `create_app(make_graph)` takes a graph factory so `tests/test_api.py` runs with fake models.
 
+## Live timing (`src/livetiming/`) — the live race tool
+
+- Data source for live and replay is **F1's own live-timing feed**, not OpenF1 (OpenF1 live is
+  paid; OpenF1's free historical API stays the source for post-race analysis in the graph).
+  - Live: SignalR Core at `wss://livetiming.formula1.com/signalrcore`, hub `Streaming`. Timing
+    topics work **without** an F1 TV token; only `CarData.z`/`Position.z` (and `PitStop`) are
+    gated. The live client is not built yet — first real test is a live session.
+  - Archive: `livetiming.formula1.com/static/<path>/<Topic>.jsonStream` has the same messages
+    with offsets, for finished sessions (2024+, incl. 2026). Everything is built/tested on it.
+- Pipeline: `archive.py` (messages) → `state.py` (merge partial updates: dict merge, list by
+  index, `_deleted`) → `snapshot.py` (`RaceSnapshot`, source-independent) → `strategy.py`
+  (deterministic SC/VSC PIT / STAY OUT calls; rules of thumb are named constants, echoed as
+  assumptions) → `monitor.py` (events; `replay()` at any speed with fast-forward).
+- Team radio: F1 publishes a curated subset of clips (MP3s, public). `src/llm/transcribe.py`
+  transcribes them with Groq Whisper (free tier), cached in `data/livetiming/radio_transcripts.v<N>.json` (bump the version in
+  `transcribe.py` when settings change). Prompt = one natural sentence with the speaking driver's
+  full name (measured best; vocabulary lists got recited back). Segments failing Whisper's
+  confidence gates are dropped.
+  `radio` events go out immediately (`text` null unless cached); `radio_transcript` follows.
+- Try it: `python -m src.live --year 2026 --meeting Azerbaijan --speed 60 --from-lap 29`
+  (two safety cars) or `--year 2024 --meeting Miami --from-lap 26`. API: `GET /api/live/sessions`,
+  `GET /api/live/replay?path=&speed=&from_lap=&transcribe=` (SSE; UI's LIVE tab).
+- Tests use `tests/fixtures/livetiming/miami_2024_sc_lap28.json` (state at the lap-28 SC) and
+  synthetic messages; never hit the archive or Groq in `tests/`.
+
 ## Regulations (RAG)
 
 - **2026 is the primary season** (the user analyses races as this season happens). 2024-2025
