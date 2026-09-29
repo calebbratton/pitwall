@@ -43,6 +43,8 @@ Rules you must follow:
   If the data needed is missing, say so in caveats. Never estimate or invent values.
 - Cite regulations only by article numbers present in REGULATIONS below.
 - Pace trends include fuel burn-off, which makes cars faster, so they understate tyre degradation.
+- REGULATIONS are search results, not the whole rulebook. If they don't address the question,
+  say the retrieved clauses don't cover it. Never claim the regulations are silent on something.
 
 TELEMETRY (tool results, JSON):
 {telemetry}

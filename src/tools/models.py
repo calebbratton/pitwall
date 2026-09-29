@@ -17,6 +17,7 @@ class Session(_Record):
     circuit_short_name: str
     year: int
     date_start: str
+    date_end: str | None = None
 
     @property
     def label(self) -> str:
@@ -58,3 +59,23 @@ class RaceControlMessage(_Record):
     scope: str | None = None
     driver_number: int | None = None
     message: str
+
+
+class Position(_Record):
+    date: str
+    driver_number: int
+    position: int
+
+
+class Interval(_Record):
+    date: str
+    driver_number: int
+    gap_to_leader: float | str | None = None  # "+1 LAP" strings for lapped cars
+    interval: float | str | None = None
+
+
+class PitStop(_Record):
+    date: str
+    driver_number: int
+    lap_number: int
+    lane_duration: float | None = None  # pit entry to pit exit, seconds

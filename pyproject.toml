@@ -13,6 +13,8 @@ dependencies = [
     "pydantic>=2",
     "python-dotenv",
     "pypdf",
+    "fastapi",
+    "uvicorn",
 ]
 
 [project.optional-dependencies]

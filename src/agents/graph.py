@@ -29,6 +29,7 @@ from src.agents.state import (
     ToolResult,
 )
 from src.llm.factory import Role, get_chat_model, with_schema
+from src.rag.glossary import expand_query
 from src.rag.index import RegulationIndex
 from src.rag.sources import source_for_race
 from src.tools.openf1 import OpenF1Client, OpenF1Error
@@ -37,6 +38,7 @@ from src.tools.telemetry import build_telemetry_tools, key_race_events
 MAX_FETCH_ROUNDS = 4
 RULES_PER_QUERY = 4
 MAX_RULES = 5
+RRF_K = 60  # standard reciprocal-rank-fusion constant
 HISTORY_MESSAGES = 6
 
 
@@ -215,26 +217,29 @@ def build_graph(
         }
 
     def retrieve(state: PitWallState) -> dict[str, Any]:
-        """Hybrid search once per router query; merge by best rank across queries."""
+        """Hybrid search per query (router queries, the question, and glossary expansions of
+        both), merged with reciprocal rank fusion so clauses that several phrasings agree on
+        rank first."""
         reg = state["reg_context"]
         queries = [*state["route"].regulation_queries, state["current_query"]]
-        best: dict[str, tuple[int, RetrievedRule]] = {}
+        queries += [e for q in list(queries) if (e := expand_query(q))]
+        scores: dict[str, float] = {}
+        rules_by_id: dict[str, RetrievedRule] = {}
         for query in queries:
-            for rank, hit in enumerate(
-                index.search(query, reg["season"], reg["issue"], k=RULES_PER_QUERY)
-            ):
+            hits = index.search(query, reg["season"], reg["issue"], k=RULES_PER_QUERY)
+            for rank, hit in enumerate(hits):
                 c = hit.chunk
-                if c.chunk_id not in best or rank < best[c.chunk_id][0]:
-                    best[c.chunk_id] = (
-                        rank,
-                        RetrievedRule(article=c.article, citation=c.citation, text=c.text),
-                    )
-        rules = [rule for _, rule in sorted(best.values(), key=lambda x: x[0])][:MAX_RULES]
+                scores[c.chunk_id] = scores.get(c.chunk_id, 0.0) + 1 / (RRF_K + rank)
+                rules_by_id[c.chunk_id] = RetrievedRule(
+                    article=c.article, citation=c.citation, text=c.text
+                )
+        ranked = sorted(scores, key=scores.__getitem__, reverse=True)[:MAX_RULES]
+        rules = [rules_by_id[chunk_id] for chunk_id in ranked]
         return {
             "retrieved_rules_text": rules,
             "evaluation_steps": [
                 *state["evaluation_steps"],
-                f"retrieve: {[r['article'] for r in rules]}",
+                f"retrieve ({len(queries)} queries): {[r['article'] for r in rules]}",
             ],
         }
 

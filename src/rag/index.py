@@ -13,6 +13,7 @@ from fastembed import SparseTextEmbedding, TextEmbedding
 from qdrant_client import QdrantClient, models
 
 from src.rag.chunking import RegChunk
+from src.rag.glossary import normalize_spelling
 
 DEFAULT_INDEX_PATH = Path("data/qdrant")
 COLLECTION = "sporting_regulations"
@@ -69,6 +70,7 @@ class RegulationIndex:
             )
 
     def search(self, query: str, season: int, issue: int, k: int = 5) -> list[RetrievedClause]:
+        query = normalize_spelling(query)
         dense = next(self._dense.embed([_QUERY_PREFIX + query])).tolist()
         sparse = next(self._sparse.query_embed(query))
         scope = models.Filter(

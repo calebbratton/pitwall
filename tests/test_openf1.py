@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -58,13 +59,58 @@ def test_race_control_red_flag_on_lap_1(client):
     assert any(m.flag == "RED" for m in msgs)
 
 
-def _http_client(handler, tmp_path: Path | None = None) -> HttpOpenF1Client:
-    c = HttpOpenF1Client(cache_dir=tmp_path)
+NOW = datetime(2026, 9, 29, 12, tzinfo=UTC)
+STINTS = [{"driver_number": 4, "stint_number": 1, "compound": "HARD", "session_key": SESSION_KEY}]
+
+
+def _http_client(handler, tmp_path: Path | None = None, now: datetime = NOW) -> HttpOpenF1Client:
+    c = HttpOpenF1Client(cache_dir=tmp_path, now=lambda: now)
     c._http = httpx.Client(base_url="https://test", transport=httpx.MockTransport(handler))
     return c
 
 
-def test_http_404_is_empty_and_cached(tmp_path):
+def _api(session_end: datetime, calls: list):
+    """Fake OpenF1: a session ending at `session_end`, and some stints for it."""
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path == "/sessions":
+            return httpx.Response(
+                200, json=[{"session_key": SESSION_KEY, "date_end": session_end.isoformat()}]
+            )
+        return httpx.Response(200, json=STINTS)
+
+    return handler
+
+
+def test_http_settled_session_is_cached_forever(tmp_path):
+    calls = []
+    c = _http_client(_api(NOW - timedelta(days=3), calls), tmp_path)
+    c.get_stints(SESSION_KEY)
+    later = _http_client(_api(NOW, calls), tmp_path, now=NOW + timedelta(days=365))
+    assert later.get_stints(SESSION_KEY)[0].compound == "HARD"
+    assert calls.count("/stints") == 1
+
+
+def test_http_recent_session_is_refetched(tmp_path):
+    calls = []
+    c = _http_client(_api(NOW - timedelta(hours=1), calls), tmp_path)
+    c.get_stints(SESSION_KEY)
+    c.get_stints(SESSION_KEY)
+    assert calls.count("/stints") == 2
+
+
+def test_http_calendar_expires(tmp_path):
+    calls = []
+    handler = lambda request: calls.append(1) or httpx.Response(200, json=[{"year": 2026}])
+    _http_client(handler, tmp_path)._fetch("sessions", {"year": 2026})
+    _http_client(handler, tmp_path, now=NOW + timedelta(hours=1))._fetch("sessions", {"year": 2026})
+    assert len(calls) == 1
+    _http_client(handler, tmp_path, now=NOW + timedelta(days=1))._fetch("sessions", {"year": 2026})
+    assert len(calls) == 2
+
+
+def test_http_404_is_empty_and_not_cached(tmp_path):
     calls = []
 
     def handler(request):
@@ -74,7 +120,13 @@ def test_http_404_is_empty_and_cached(tmp_path):
     c = _http_client(handler, tmp_path)
     assert c.get_stints(SESSION_KEY, driver_number=999) == []
     assert c.get_stints(SESSION_KEY, driver_number=999) == []
-    assert len(calls) == 1
+    assert len(calls) == 2
+
+
+def test_http_live_data_refusal_explains_paid_window():
+    c = _http_client(lambda request: httpx.Response(401))
+    with pytest.raises(OpenF1Error, match="30 minutes after"):
+        c.get_drivers(SESSION_KEY)
 
 
 def test_http_retries_on_429(monkeypatch):

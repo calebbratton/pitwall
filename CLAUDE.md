@@ -61,6 +61,14 @@ skips telemetry and an error path (ambiguous/future race) straight to `synthesiz
   turns; per-question fields are reset by `route`.
 - Tests use scripted fake models (`tests/test_graph.py`); never call a real LLM in `tests/`.
 
+## HTTP API (`src/api.py`) and UI
+
+- `uvicorn src.api:app --reload --port 8000`. `POST /api/chat` streams SSE events `thread`,
+  `step` (one per graph node), `answer`, `error`; `GET /api/health`. The contract is documented
+  in the module docstring and consumed by the sibling repo `~/projects/pitwall-ui` — change both
+  together. CORS origins via `PITWALL_UI_ORIGINS` (default `http://localhost:5173`).
+- `create_app(make_graph)` takes a graph factory so `tests/test_api.py` runs with fake models.
+
 ## Regulations (RAG)
 
 - **2026 is the primary season** (the user analyses races as this season happens). 2024-2025
@@ -72,6 +80,9 @@ skips telemetry and an error path (ambiguous/future race) straight to `synthesiz
   `section_b` (2026+, `B6.3.6`). The 2026 PDF renders the "ff" ligature as `‘`/`W`; it's fixed
   in `_fix_ligatures`. Appendices are not indexed.
 - One chunk per clause (long ones split into parts); `RegChunk.citation` is what answers must cite.
+- `src/rag/glossary.py` rewrites paddock jargon into regulation vocabulary ("red flag" →
+  "suspension", "undercut" → "pit stop tyre change"). Substitute, don't append: appended words
+  dilute the embedding. `retrieve` merges all query variants with reciprocal rank fusion.
 - Ingest takes a few minutes on this machine (CPU embeddings); searches are fast.
 
 ## OpenF1 notes
@@ -106,6 +117,7 @@ uv pip install -e ".[dev]"
 python scripts/ingest_regulations.py   # download + chunk + index FIA regs (~minutes)
 python scripts/record_fixtures.py --year 2024 --place Monaco --drivers 4 81 16
 python -m src.chat --trace            # chat in the terminal (uses Groq)
+uvicorn src.api:app --reload --port 8000  # API for pitwall-ui
 pytest tests --ignore=tests/evals      # fast, offline
 pytest tests/evals                     # benchmark suite, calls the LLM
 ```
