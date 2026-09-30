@@ -23,7 +23,12 @@ class LuckReport:
     windows: int
 
 
-def neutralisation_luck(con, race_sk: int, pit_loss_green: float) -> LuckReport:
+def neutralisation_luck(
+    con, race_sk: int, pit_loss_green: float, after_lap: int | None = None
+) -> LuckReport:
+    """`after_lap`: only count neutralisations that start after the leader began lap
+    `after_lap + 1` — for scoring an in-race prediction made on lap `after_lap`, where the
+    neutralisation already underway is part of the situation, not luck to be removed."""
     laps = con.execute(
         """SELECT driver_number, lap_number, lap_end, lap_time FROM laps
            WHERE session_key = ? AND lap_end IS NOT NULL ORDER BY 1, 2""",
@@ -49,6 +54,12 @@ def neutralisation_luck(con, race_sk: int, pit_loss_green: float) -> LuckReport:
            WHERE session_key = ? ORDER BY 1""",
         [race_sk],
     ).fetchall()
+    if after_lap is not None:
+        cutoff = con.execute(
+            "SELECT min(lap_start) FROM laps WHERE session_key = ? AND lap_number = ?",
+            [race_sk, after_lap + 1],
+        ).fetchone()[0]
+        windows = [w for w in windows if cutoff is not None and w[0] > cutoff]
 
     luck: dict[int, float] = defaultdict(float)
     for start, end in windows:

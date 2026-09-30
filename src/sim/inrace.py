@@ -29,7 +29,6 @@ DEFAULT_DEG = {"SOFT": 0.09, "MEDIUM": 0.06, "HARD": 0.045}
 DEFAULT_LIFE = {"SOFT": 30, "MEDIUM": 30, "HARD": 35, "INTERMEDIATE": 30, "WET": 40}
 CLIFF_S_PER_LAP2 = 0.08  # extra time per lap, per lap beyond the long-stint length
 RECENT_LAPS = 8
-TAKE_NEUTRALISED_STOP = 0.9  # share of cars needing a stop that take it under the current SC/VSC
 MIN_LAPS_FOR_PREDICTION = 3
 
 
@@ -58,6 +57,20 @@ class RaceState:
     pit_loss_green: float
     pit_loss_sc: float
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class InRaceParams:
+    """Uncertainty the in-race simulation represents (tuned by src/sim/inrace_backtest.py)."""
+
+    # s/lap: uncertainty in each car's estimated pace (per simulation). 0.3 chosen in 12/15
+    # leave-one-race-out folds over 57 2026 checkpoints: winner log-loss 1.95 -> 1.33.
+    pace_sigma: float = 0.3
+    restart_noise: float = 0.0  # s: randomness at an SC restart (jumps, mistakes)
+    take_neutralised_stop: float = 0.9  # share of cars needing a stop that take it under SC/VSC
+
+
+DEFAULT_CALIBRATION = InRaceParams()
 
 
 class NotEnoughData(ValueError):
@@ -170,13 +183,19 @@ def tyre_outlook(car: CarState, state: RaceState) -> tuple[str, str]:
 
 
 def simulate_from(
-    state: RaceState, params: SimParams | None = None, sims: int = 2000, seed: int = 0
+    state: RaceState,
+    params: SimParams | None = None,
+    sims: int = 2000,
+    seed: int = 0,
+    calib: InRaceParams | None = None,
 ) -> dict:
     p = params or SimParams()
+    cal = calib or DEFAULT_CALIBRATION
     rng = np.random.default_rng(seed)
     cars, n, remaining = state.cars, len(state.cars), state.laps_remaining
     rows = np.arange(sims)[:, None]
-    pace = np.array([c.pace_s for c in cars])[None, :]
+    pace = np.array([car.pace_s for car in cars])[None, :]
+    pace = pace + rng.normal(0, cal.pace_sigma, (sims, n)) if cal.pace_sigma else pace
     life = np.array([state.life.get(c.compound or "", 30) for c in cars], dtype=float)[None, :]
     deg_now = np.array([state.deg.get(c.compound or "", 0.06) for c in cars])[None, :]
     age = np.tile(np.array([c.tyre_age for c in cars], dtype=float), (sims, 1))
@@ -195,7 +214,7 @@ def simulate_from(
     if state.status in ("SAFETY_CAR", "VSC"):
         # Cars that need a stop take the cheap one now (what the pit calls say and what teams
         # do): most of the time, not always — some gamble on track position.
-        take_now = rng.random((sims, n)) < TAKE_NEUTRALISED_STOP
+        take_now = rng.random((sims, n)) < cal.take_neutralised_stop
         stop_lap = np.where(needs_stop & take_now, 1, stop_lap)
     new_deg = np.array(
         [state.deg.get("HARD" if c.compound != "HARD" else "MEDIUM", 0.05) for c in cars]
@@ -228,6 +247,8 @@ def simulate_from(
             # overtaking on this lap.
             rank = np.argsort(np.argsort(new_T, axis=1), axis=1)
             T = new_T.min(axis=1, keepdims=True) + rank * 0.8
+            if cal.restart_noise:
+                T = T + rng.normal(0, cal.restart_noise, (sims, n))
             continue
         traffic_step(new_T, lap_time, order, running, np.ones(sims, dtype=bool), p, rng)
         T = new_T
