@@ -275,9 +275,7 @@ TEAM_PACE_SHRINK = 2  # pseudo-races of "no gap" in the running mean
 TEAM_PACE_HALF_LIFE: float | None = 3.0
 
 
-def season_team_pace(
-    con, year: int, before, half_life: float | None = None
-) -> dict[str, float]:
+def season_team_pace(con, year: int, before, half_life: float | None = None) -> dict[str, float]:
     """Per team: race-pace gap to the fastest driver (% of a lap) over this season's earlier
     races, shrunk toward 0: sum / (races + TEAM_PACE_SHRINK). Clean green laps only (tyre-age
     corrected), so SC/VSC luck doesn't enter."""

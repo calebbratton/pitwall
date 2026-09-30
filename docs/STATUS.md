@@ -74,7 +74,8 @@ change predictions automatically (`predict --rain` is a what-if).
    2026; win log-loss 1.57 → 1.53, podium 0.286 → 0.245, points 0.736 → 0.426 (raw sim was very
    overconfident in the midfield). `predict` applies it (`--raw` to see the simulator's own
    numbers). With recency-weighted team race pace (added 2026-09-30, user chose to keep it)
-   Madrid predicts ANT 38% / NOR 23%: Mercedes had the faster race car in the 13 earlier races
+   Madrid predicts ANT 34% / NOR 28% (weight 0.25; 0.5 picked fewer winners than pole: 49 vs 52
+   of 85 races, 0.25 picks 53): Mercedes had the faster race car in the 13 earlier races
    and NOR's pole margin was 0.011 s. NOR is still the luck-adjusted winner it's scored against. Next: LLM-judge evals (DeepEval/Ragas:
    faithfulness + retrieval precision, Qwen on Groq as judge); then a regulations reranker, Bayesian
    tyre priors (PyMC/NumPyro), radio → structured events, live anomaly detection, LightGBM

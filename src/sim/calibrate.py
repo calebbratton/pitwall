@@ -41,8 +41,8 @@ class Calibration:
 
 
 # Fitted on 2026 (15 races, luck-adjusted, leave-one-race-out). With recency-weighted team pace
-# (2026-09-30): winner log-loss 1.74 raw -> 1.44 calibrated, podium 0.327 -> 0.256, points
-# 0.689 -> 0.418. The raw simulator is overconfident, most of all deep in the field.
+# at 0.25 (2026-09-30): winner log-loss 1.61 raw -> 1.42 calibrated, podium 0.298 -> 0.245,
+# points 0.704 -> 0.417. The raw simulator is overconfident, most of all deep in the field.
 DEFAULT_CALIBRATION = Calibration(win=1.8, podium=2.2, points=4.0)
 
 

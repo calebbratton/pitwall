@@ -32,10 +32,11 @@ class SimParams:
     form_weight: float = 0.0
     form_full_after: int = 5  # races of history for full weight (shrinks toward 0 before)
     # Weight on the team's race pace in earlier races (DriverInput.team_pace_s, recency-weighted,
-    # half-life 3 races). 2023-26 calibrated winner log-loss 1.176 -> 1.123: better in the
-    # wide-spread seasons (2023, 2026 = year one of new regs), slightly worse once the field
-    # converged (2024-25). Revisit as the 2026 regs mature (user: fields converge year on year).
-    team_pace_weight: float = 0.5
+    # half-life 3 races). 2023-26 (85 races): 0.25 picks 53 winners vs 52 for pole and 51
+    # without it, and calibrated winner log-loss 1.176 -> 1.151. 0.5 calibrates a bit better
+    # (1.123) but overrides small qualifying margins at the front: 49 winners, 5/15 in 2026.
+    # Revisit as the 2026 regs mature (user: fields converge year on year).
+    team_pace_weight: float = 0.25
     missing_pace_per_grid_slot: float = 0.1  # s/lap per grid slot when a car has no pace data
     lap_noise: float = 0.35  # s, lap-to-lap variation
     # s, lap-1 shuffle. Tuned to 2.0 (grid edge): it also absorbs race randomness the model
