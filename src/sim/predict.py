@@ -56,8 +56,9 @@ def main() -> None:
     for note in notes:
         print(f"- {note}")
     print(
-        "- backtest (2026, out-of-sample): order ≈ qualifying-pace baseline (rank corr. 0.66); "
-        "winner probabilities better calibrated than grid win rates (log-loss 0.93 vs 1.43)"
+        "- backtest (2026 finishers, out-of-sample): order ≈ qualifying-pace baseline "
+        "(rank corr. 0.85); winner probabilities better than grid win rates (log-loss 0.99 vs "
+        "1.43). Positions assume every car finishes."
     )
 
 

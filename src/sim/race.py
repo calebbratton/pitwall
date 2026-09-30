@@ -8,9 +8,12 @@ Per simulated race:
   each lap   lap time = pace + tyre wear × tyre age + noise; one pit stop in a window
   traffic    a car catching the one ahead passes with P(pass | pace advantage) — otherwise it's
              held behind (min gap + dirty-air loss)
-  SC         random per-lap hazard; the queue is compressed and cars that haven't stopped (and are
-             in their window) pit cheaply
-  DNF        random per car
+  SC         random per-lap hazard, ~8 laps: the queue is compressed and every car that hasn't
+             stopped (and is in its window) can pit cheaply
+  VSC        random per-lap hazard, ~1-2 laps, gaps preserved: a car can only use it if it reaches
+             the pit entry before it ends — cars that just passed the pit entry miss out
+             (Norris, Madrid 2026)
+  DNF        off by default: retirements are unpredictable noise for a pace model
 """
 
 from dataclasses import dataclass
@@ -31,12 +34,13 @@ class SimParams:
     lap_noise: float = 0.35  # s, lap-to-lap variation
     start_noise: float = 0.6  # s, lap-1 shuffle
     grid_spacing: float = 0.3  # s per grid slot at the end of lap 1 (before the shuffle)
-    pass_threshold: float = 0.5  # s/lap advantage for a 50% pass chance
+    pass_threshold: float = 0.3  # s/lap advantage for a 50% pass chance (tuned, 12/15 folds)
     pass_scale: float = 0.2  # logistic width of the pass curve
     min_gap: float = 0.4  # s, closest a held car can follow
     dirty_air: float = 0.2  # s lost per lap stuck behind a car
     stop_window: tuple[float, float] = (0.3, 0.65)  # fraction of race distance
-    sc_laps: int = 4
+    vsc_pace_factor: float = 1.35  # VSC laps take ~35% longer (delta time to hold)
+    include_dnfs: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,35 +99,58 @@ def simulate(
     pace = race_pace(inputs, p)[None, :]  # [1, n]
     grid = np.array([d.grid for d in inputs.drivers], dtype=float)
     deg = float(np.mean(list(inputs.deg.values())))
+    rows = np.arange(sims)[:, None]
+    flat = rows[:, 0]
 
     # Start: grid spacing plus a lap-1 shuffle.
     T = (grid[None, :] - 1) * p.grid_spacing + rng.normal(0, p.start_noise, (sims, n))
     age = np.zeros((sims, n))
-    stop_lap = rng.integers(
-        int(laps * p.stop_window[0]), int(laps * p.stop_window[1]) + 1, (sims, n)
-    )
+    first_window = int(laps * p.stop_window[0])
+    stop_lap = rng.integers(first_window, int(laps * p.stop_window[1]) + 1, (sims, n))
     stopped = np.zeros((sims, n), dtype=bool)
+    dnf_prob = inputs.dnf_prob if p.include_dnfs else 0.0
     dnf_lap = np.where(
-        rng.random((sims, n)) < inputs.dnf_prob, rng.integers(1, laps + 1, (sims, n)), laps + 1
+        rng.random((sims, n)) < dnf_prob, rng.integers(1, laps + 1, (sims, n)), laps + 1
     )
     sc_hazard = inputs.sc_per_race / laps
-    sc_left = np.zeros(sims, dtype=int)
-    rows = np.arange(sims)[:, None]
+    vsc_hazard = inputs.vsc_per_race / laps
+    sc_left = np.zeros(sims)  # laps of SC remaining
+    vsc_left = np.zeros(sims)  # laps of VSC remaining (fractional)
 
     for lap in range(2, laps + 1):
         running = dnf_lap > lap
-        # Safety car starts
-        new_sc = (sc_left == 0) & (rng.random(sims) < sc_hazard)
-        sc_left = np.where(new_sc, p.sc_laps, np.maximum(sc_left - 1, 0))
+        quiet = (sc_left <= 0) & (vsc_left <= 0)
+        draw = rng.random(sims)
+        new_sc = quiet & (draw < sc_hazard)
+        new_vsc = quiet & ~new_sc & (draw < sc_hazard + vsc_hazard)
+        sc_left = np.where(new_sc, np.maximum(1, rng.normal(inputs.sc_laps, 1.5, sims)), sc_left)
+        vsc_left = np.where(
+            new_vsc, np.clip(rng.exponential(inputs.vsc_laps, sims), 0.3, 4.0), vsc_left
+        )
         under_sc = sc_left > 0
+        under_vsc = vsc_left > 0
 
         order = np.argsort(np.where(running, T, np.inf), axis=1)  # running order before the lap
         lap_time = pace + deg * age + rng.normal(0, p.lap_noise, (sims, n))
+        lap_time = np.where(under_sc[:, None], 0.0, lap_time)  # SC: everyone at the same pace
 
-        # Pit stops: planned stop lap, or opportunistic under a new SC inside the window.
-        in_window = lap >= int(laps * p.stop_window[0]) * 0.8
-        pit_now = ~stopped & running & ((stop_lap == lap) | (new_sc[:, None] & in_window))
-        loss = np.where(under_sc[:, None], inputs.pit_loss_sc, inputs.pit_loss_green)
+        # Who can pit cheaply: under an SC anyone; under a new VSC only cars that reach the
+        # pit entry (end of the lap) before it ends. Their lap position when it's called is
+        # uniform; reaching the entry takes (1 - position) laps at VSC pace.
+        lap_position = rng.random((sims, n))
+        reaches_pit = (1 - lap_position) * p.vsc_pace_factor <= vsc_left[:, None]
+        in_window = lap >= first_window * 0.8
+        cheap = in_window & (new_sc[:, None] | (new_vsc[:, None] & reaches_pit))
+        pit_now = ~stopped & running & ((stop_lap == lap) | cheap)
+        loss = np.where(
+            under_sc[:, None],
+            inputs.pit_loss_sc,
+            np.where(
+                under_vsc[:, None] & (new_vsc[:, None] & reaches_pit),
+                inputs.pit_loss_vsc,
+                inputs.pit_loss_green,
+            ),
+        )
         lap_time = lap_time + np.where(pit_now, loss, 0.0)
         age = np.where(pit_now, 0, age + 1)
         stopped |= pit_now
@@ -136,22 +163,24 @@ def simulate(
             leader = np.take_along_axis(new_T, order[:, :1], axis=1)
             queued = leader + rank * 0.8
             new_T = np.where(new_sc[:, None] & running, queued, new_T)
-        if not under_sc.all():
+        racing = ~under_sc & ~under_vsc
+        if racing.any():
             # Traffic, front to back: a car that would close within min_gap of the car ahead
             # passes with P(advantage), else it's held behind and pays dirty air.
-            green = ~under_sc
             for k in range(1, n):
                 car = order[:, k]
                 ahead = order[:, k - 1]
-                t_car = new_T[rows[:, 0], car]
-                t_ahead = new_T[rows[:, 0], ahead]
-                ok = running[rows[:, 0], car] & running[rows[:, 0], ahead] & green
+                t_car = new_T[flat, car]
+                t_ahead = new_T[flat, ahead]
+                ok = running[flat, car] & running[flat, ahead] & racing
                 close = ok & (t_car < t_ahead + p.min_gap)
-                advantage = lap_time[rows[:, 0], ahead] - lap_time[rows[:, 0], car]
+                advantage = lap_time[flat, ahead] - lap_time[flat, car]
                 p_pass = 1 / (1 + np.exp(-(advantage - p.pass_threshold) / p.pass_scale))
                 held = close & (rng.random(sims) >= p_pass)
-                new_T[rows[:, 0], car] = np.where(held, t_ahead + p.min_gap + p.dirty_air, t_car)
+                new_T[flat, car] = np.where(held, t_ahead + p.min_gap + p.dirty_air, t_car)
         T = np.where(running, new_T, T)
+        sc_left = np.maximum(sc_left - 1, 0)
+        vsc_left = np.maximum(vsc_left - 1, 0)
 
     # Finishing order: classified cars by time; DNFs behind, those who lasted longer ahead.
     key = np.where(dnf_lap > laps, T, 1e9 - dnf_lap)

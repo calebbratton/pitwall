@@ -34,35 +34,44 @@ def _ranks(values: np.ndarray) -> np.ndarray:
 
 
 def actual_order(con, inputs: WeekendInputs) -> np.ndarray:
-    """Finishing rank per input driver: classified by position, then DNFs by laps completed."""
+    """Finishing rank per input driver among classified finishers; NaN for DNF/DNS/DSQ.
+    Retirements are unpredictable noise for a pace model, so scoring ignores them."""
     rows = {
-        n: (pos, laps or 0, bool(dnf or dns or dsq))
-        for n, pos, laps, dnf, dns, dsq in con.execute(
-            """SELECT driver_number, position, number_of_laps, dnf, dns, dsq
+        n: (pos, bool(dnf or dns or dsq))
+        for n, pos, dnf, dns, dsq in con.execute(
+            """SELECT driver_number, position, dnf, dns, dsq
                FROM raw_results WHERE session_key = ?""",
             [inputs.race_session_key],
         ).fetchall()
     }
-    keys = []
-    for d in inputs.drivers:
-        pos, laps, out = rows.get(d.number, (None, 0, True))
-        keys.append((1, -laps) if out or pos is None else (0, pos))
-    order = sorted(range(len(keys)), key=lambda i: keys[i])
-    ranks = np.empty(len(keys))
-    ranks[order] = np.arange(1, len(keys) + 1)
+    positions = np.array(
+        [
+            np.nan if (r := rows.get(d.number)) is None or r[1] or r[0] is None else r[0]
+            for d in inputs.drivers
+        ],
+        dtype=float,
+    )
+    finished = ~np.isnan(positions)
+    ranks = np.full(len(positions), np.nan)
+    ranks[finished] = _ranks(positions[finished])
     return ranks
 
 
 def score(predicted: np.ndarray, actual: np.ndarray, p_win: np.ndarray | None = None) -> Score:
-    pred_rank = _ranks(predicted)
-    spearman = float(np.corrcoef(pred_rank, actual)[0, 1])
-    winner = int(np.argmin(actual))
-    logloss = None if p_win is None else -math.log(max(float(p_win[winner]), 1e-3))
+    """Compare over classified finishers only (actual rank is NaN for non-finishers)."""
+    finished = ~np.isnan(actual)
+    pred_rank = _ranks(np.asarray(predicted, dtype=float)[finished])
+    act = actual[finished]
+    spearman = float(np.corrcoef(pred_rank, act)[0, 1])
+    winner = int(np.argmin(act))
+    logloss = None
+    if p_win is not None:
+        logloss = -math.log(max(float(np.asarray(p_win)[finished][winner]), 1e-3))
     return Score(
         spearman=spearman,
-        mae=float(np.mean(np.abs(pred_rank - actual))),
+        mae=float(np.mean(np.abs(pred_rank - act))),
         winner_hit=int(np.argmin(pred_rank)) == winner,
-        podium_overlap=len(set(np.argsort(pred_rank)[:3]) & set(np.argsort(actual)[:3])),
+        podium_overlap=len(set(np.argsort(pred_rank)[:3]) & set(np.argsort(act)[:3])),
         winner_logloss=logloss,
     )
 
@@ -86,7 +95,7 @@ def backtest(year: int = 2026, params: SimParams | None = None, sims: int = 1000
         for other, (o_inputs, o_actual) in orders.items():
             if other == location:
                 continue
-            winner = int(np.argmin(o_actual))
+            winner = int(np.nanargmin(o_actual))
             slot = o_inputs.drivers[winner].grid - 1
             if slot < len(wins):
                 wins[slot] += 1

@@ -107,5 +107,5 @@ def fetch_circuit(key: int, year: int, cache_dir: Path | None = DEFAULT_CACHE) -
                 cached.write_text(json.dumps(raw))
         return parse_circuit(raw, key, year)
     except (httpx.HTTPError, KeyError, ValueError):
-        log.warning("circuit %s/%s unavailable; using traced outline", key, year, exc_info=True)
+        log.warning("circuit %s/%s unavailable (no MultiViewer data); using fallbacks", key, year)
         return None

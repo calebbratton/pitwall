@@ -44,7 +44,9 @@ def test_harder_passing_keeps_a_fast_car_stuck_behind():
 
 
 def test_retirements_cap_points_probability():
-    pred = simulate(_weekend(n=20, dnf=0.3), sims=1000, seed=3)
+    pred = simulate(
+        _weekend(n=20, dnf=0.3), replace(SimParams(), include_dnfs=True), sims=1000, seed=3
+    )
     # Retired cars are classified last, so the favourite's P(points) ~ P(finishing) ~ 0.7.
     assert 0.6 < pred.probability(10)[0] < 0.8
 
@@ -61,3 +63,32 @@ def test_score_metrics():
     s = score(np.array([1.0, 2, 3, 4]), np.array([1.0, 2, 3, 4]), np.array([0.7, 0.2, 0.1, 0.0]))
     assert s.spearman == 1.0 and s.mae == 0 and s.winner_hit and s.podium_overlap == 3
     assert round(s.winner_logloss, 3) == 0.357
+
+
+def test_dnfs_ignored_by_default():
+    pred = simulate(_weekend(n=20, dnf=0.9), sims=300, seed=4)
+    assert pred.probability(1)[0] > 0.5  # a 90% retirement rate changes nothing
+
+
+def test_vsc_timing_can_cost_the_leader_the_race():
+    """Madrid 2026: the leader passes the pit entry as the VSC comes out, the chasers get a
+    cheap stop, he doesn't. Equal-pace cars, leader 6 s clear."""
+
+    def two_cars(vsc):
+        w = _weekend(n=2, gaps=0.0, laps=50)
+        w.vsc_per_race, w.pit_loss_vsc, w.pit_loss_green = vsc, 14.0, 22.0
+        return w
+
+    params = replace(SimParams(), grid_spacing=6.0, start_noise=0.1, lap_noise=0.05)
+    calm = simulate(two_cars(0.0), params, sims=2000, seed=5)
+    vscs = simulate(two_cars(3.0), params, sims=2000, seed=5)
+    assert calm.probability(1)[1] < 0.1  # without neutralisations the chaser rarely wins
+    # A VSC only swings it when it lands in the pit window before either car stopped, and the
+    # leader can't reach the pit entry in time — rare, but it multiplies the chaser's chances.
+    assert vscs.probability(1)[1] > 2.5 * calm.probability(1)[1]
+
+
+def test_score_ignores_non_finishers():
+    actual = np.array([1.0, np.nan, 2, 3])  # car 2 retired
+    s = score(np.array([1.0, 2, 3, 4]), actual, np.array([0.6, 0.3, 0.1, 0.0]))
+    assert s.spearman == 1.0 and s.mae == 0 and s.winner_hit

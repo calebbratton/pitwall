@@ -12,7 +12,7 @@ from src.models.tyres import CleanLap, fit_tyre_model
 
 MIN_LONG_RUN_LAPS = 6
 SPRINT_WEIGHT = 2.0  # a sprint is a real race: its pace counts double vs a practice long run
-DEFAULT_PIT_LOSS = (22.0, 13.5)  # green, SC — used when no measured circuit data exists
+DEFAULT_PIT_LOSS = (22.0, 13.5, 15.5)  # green, SC, VSC — when no measured circuit data exists
 DEFAULT_DEG = {"SOFT": 0.09, "MEDIUM": 0.06, "HARD": 0.045}  # 2026-ish fallback, s/lap
 
 
@@ -38,9 +38,13 @@ class WeekendInputs:
     deg: dict[str, float]  # s/lap of tyre age, per compound
     pit_loss_green: float
     pit_loss_sc: float
-    sc_per_race: float  # full safety cars per race (VSCs are counted at half weight)
-    dnf_prob: float  # per car per race
+    sc_per_race: float  # full safety cars per race
+    dnf_prob: float  # per car per race (the simulator ignores DNFs by default)
     notes: list[str] = field(default_factory=list)
+    vsc_per_race: float = 0.0
+    pit_loss_vsc: float = DEFAULT_PIT_LOSS[2]
+    sc_laps: float = 6.0  # typical safety car length, laps (incl. the restart lap)
+    vsc_laps: float = 1.4  # typical VSC length, laps
 
 
 def weekend_sessions(con, year: int, place: str) -> tuple[int, dict[str, int]]:
@@ -151,8 +155,18 @@ def _long_run_deltas(
     return {d: sum(v * w for v, w in vals) / sum(w for _, w in vals) for d, vals in totals.items()}
 
 
-def _season_rates(con, year: int, exclude_meeting: int) -> tuple[float, float, int]:
-    """(safety cars per race incl. VSCs at half weight, DNF probability per car, races used)."""
+@dataclass(frozen=True)
+class SeasonRates:
+    sc_per_race: float
+    vsc_per_race: float
+    sc_laps: float
+    vsc_laps: float
+    dnf_prob: float
+    races: int
+
+
+def _season_rates(con, year: int, exclude_meeting: int) -> SeasonRates:
+    """SC / VSC frequency and length, and DNF probability, from the season's OTHER races."""
     races = [
         r[0]
         for r in con.execute(
@@ -161,19 +175,34 @@ def _season_rates(con, year: int, exclude_meeting: int) -> tuple[float, float, i
         ).fetchall()
     ]
     if not races:
-        return 1.0, 0.08, 0
+        return SeasonRates(0.7, 1.2, 6.0, 1.4, 0.08, 0)
     marks = ",".join("?" * len(races))
-    sc, vsc = con.execute(
-        f"""SELECT count(*) FILTER (kind = 'SC'), count(*) FILTER (kind = 'VSC')
+    sc, vsc, sc_s, vsc_s = con.execute(
+        f"""SELECT count(*) FILTER (kind = 'SC'), count(*) FILTER (kind = 'VSC'),
+                   median(epoch("end"::TIMESTAMPTZ - start::TIMESTAMPTZ)) FILTER (kind = 'SC' AND "end" < '9999'),
+                   median(epoch("end"::TIMESTAMPTZ - start::TIMESTAMPTZ)) FILTER (kind = 'VSC' AND "end" < '9999')
             FROM raw_neutralised WHERE session_key IN ({marks})""",
         races,
     ).fetchone()
+    lap_s = (
+        con.execute(
+            f"SELECT median(lap_time) FROM clean_laps WHERE session_key IN ({marks})", races
+        ).fetchone()[0]
+        or 90.0
+    )
     dnf, starters = con.execute(
         f"""SELECT count(*) FILTER (dnf), count(*) FILTER (NOT dns)
             FROM raw_results WHERE session_key IN ({marks})""",
         races,
     ).fetchone()
-    return (sc + 0.5 * vsc) / len(races), dnf / max(starters, 1), len(races)
+    return SeasonRates(
+        sc_per_race=sc / len(races),
+        vsc_per_race=vsc / len(races),
+        sc_laps=(sc_s or 540) / lap_s,
+        vsc_laps=(vsc_s or 120) / lap_s,
+        dnf_prob=dnf / max(starters, 1),
+        races=len(races),
+    )
 
 
 def _race_minus_quali(con, race_sk: int, quali_sk: int) -> dict[str, float]:
@@ -273,16 +302,37 @@ def build_inputs(con, year: int, place: str, laps: int | None = None) -> Weekend
     ).fetchone()[0]
     circuit = fetch_circuit(int(circuit_key), year) if circuit_key else None
     if circuit and circuit.pit_loss:
-        pit_green, pit_sc = circuit.pit_loss.green, circuit.pit_loss.safety_car
+        pit_green, pit_sc, pit_vsc = (
+            circuit.pit_loss.green,
+            circuit.pit_loss.safety_car,
+            circuit.pit_loss.vsc,
+        )
     else:
-        pit_green, pit_sc = DEFAULT_PIT_LOSS
+        pit_green, pit_sc, pit_vsc = DEFAULT_PIT_LOSS
         notes.append("default pit loss (no measured circuit data)")
 
-    sc_rate, dnf_prob, n_races = _season_rates(con, year, meeting_key)
-    notes.append(f"SC and DNF rates from {n_races} other {year} races")
+    rates = _season_rates(con, year, meeting_key)
+    notes.append(
+        f"{rates.sc_per_race:.2f} SC + {rates.vsc_per_race:.2f} VSC per race "
+        f"from {rates.races} other {year} races"
+    )
     meeting = con.execute(
         "SELECT any_value(location) FROM races WHERE meeting_key = ?", [meeting_key]
     ).fetchone()[0]
     return WeekendInputs(
-        meeting, year, race_sk, int(laps), drivers, deg, pit_green, pit_sc, sc_rate, dnf_prob, notes
+        meeting,
+        year,
+        race_sk,
+        int(laps),
+        drivers,
+        deg,
+        pit_green,
+        pit_sc,
+        rates.sc_per_race,
+        rates.dnf_prob,
+        notes,
+        vsc_per_race=rates.vsc_per_race,
+        pit_loss_vsc=pit_vsc,
+        sc_laps=rates.sc_laps,
+        vsc_laps=rates.vsc_laps,
     )
