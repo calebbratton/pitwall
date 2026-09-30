@@ -1,0 +1,136 @@
+"""Backtest the race simulator on finished races, against naive baselines.
+
+For each race: predict from pre-race data only (practice, sprint, qualifying, grid; season rates
+exclude the race), then score against the classified result.
+
+Usage: python -m src.sim.backtest [--year 2026] [--sims 1000]
+"""
+
+import argparse
+import math
+from dataclasses import dataclass
+
+import numpy as np
+
+from src.sim.inputs import WeekendInputs, build_inputs
+from src.sim.race import SimParams, simulate
+from src.warehouse.queries import connect
+
+
+@dataclass(frozen=True)
+class Score:
+    spearman: float
+    mae: float
+    winner_hit: bool
+    podium_overlap: int
+    winner_logloss: float | None
+
+
+def _ranks(values: np.ndarray) -> np.ndarray:
+    order = np.argsort(values, kind="stable")
+    ranks = np.empty(len(values))
+    ranks[order] = np.arange(1, len(values) + 1)
+    return ranks
+
+
+def actual_order(con, inputs: WeekendInputs) -> np.ndarray:
+    """Finishing rank per input driver: classified by position, then DNFs by laps completed."""
+    rows = {
+        n: (pos, laps or 0, bool(dnf or dns or dsq))
+        for n, pos, laps, dnf, dns, dsq in con.execute(
+            """SELECT driver_number, position, number_of_laps, dnf, dns, dsq
+               FROM raw_results WHERE session_key = ?""",
+            [inputs.race_session_key],
+        ).fetchall()
+    }
+    keys = []
+    for d in inputs.drivers:
+        pos, laps, out = rows.get(d.number, (None, 0, True))
+        keys.append((1, -laps) if out or pos is None else (0, pos))
+    order = sorted(range(len(keys)), key=lambda i: keys[i])
+    ranks = np.empty(len(keys))
+    ranks[order] = np.arange(1, len(keys) + 1)
+    return ranks
+
+
+def score(predicted: np.ndarray, actual: np.ndarray, p_win: np.ndarray | None = None) -> Score:
+    pred_rank = _ranks(predicted)
+    spearman = float(np.corrcoef(pred_rank, actual)[0, 1])
+    winner = int(np.argmin(actual))
+    logloss = None if p_win is None else -math.log(max(float(p_win[winner]), 1e-3))
+    return Score(
+        spearman=spearman,
+        mae=float(np.mean(np.abs(pred_rank - actual))),
+        winner_hit=int(np.argmin(pred_rank)) == winner,
+        podium_overlap=len(set(np.argsort(pred_rank)[:3]) & set(np.argsort(actual)[:3])),
+        winner_logloss=logloss,
+    )
+
+
+def backtest(year: int = 2026, params: SimParams | None = None, sims: int = 1000, quiet=False):
+    con = connect()
+    meetings = con.execute(
+        """SELECT DISTINCT location, min(date_start) OVER (PARTITION BY meeting_key) AS d
+           FROM races WHERE year = ? AND session_name = 'Race' ORDER BY d""",
+        [year],
+    ).fetchall()
+    results: dict[str, list[Score]] = {"sim": [], "grid": [], "quali": []}
+    for location, _ in meetings:
+        inputs = build_inputs(con, year, location)
+        actual = actual_order(con, inputs)
+        pred = simulate(inputs, params, sims=sims)
+        grid = np.array([d.grid for d in inputs.drivers], dtype=float)
+        quali = np.array(
+            [
+                d.quali_delta_s if d.quali_delta_s is not None else 99 + d.grid
+                for d in inputs.drivers
+            ]
+        )
+        row = {
+            "sim": score(pred.expected_position(), actual, pred.probability(1)),
+            "grid": score(grid, actual),
+            "quali": score(quali, actual),
+        }
+        for k, v in row.items():
+            results[k].append(v)
+        if not quiet:
+            s, g = row["sim"], row["grid"]
+            print(
+                f"{location:18} sim ρ {s.spearman:+.2f} mae {s.mae:4.1f} win {'✓' if s.winner_hit else '·'} "
+                f"pod {s.podium_overlap}/3 | grid ρ {g.spearman:+.2f} mae {g.mae:4.1f} "
+                f"win {'✓' if g.winner_hit else '·'} pod {g.podium_overlap}/3"
+            )
+    return results
+
+
+def summarise(results) -> dict[str, dict[str, float]]:
+    out = {}
+    for name, scores in results.items():
+        ll = [s.winner_logloss for s in scores if s.winner_logloss is not None]
+        out[name] = {
+            "spearman": float(np.mean([s.spearman for s in scores])),
+            "mae": float(np.mean([s.mae for s in scores])),
+            "winners": sum(s.winner_hit for s in scores),
+            "podium": float(np.mean([s.podium_overlap for s in scores])),
+            "winner_logloss": float(np.mean(ll)) if ll else float("nan"),
+            "races": len(scores),
+        }
+    return out
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--year", type=int, default=2026)
+    ap.add_argument("--sims", type=int, default=1000)
+    args = ap.parse_args()
+    summary = summarise(backtest(args.year, sims=args.sims))
+    print()
+    for name, m in summary.items():
+        print(
+            f"{name:6} ρ {m['spearman']:+.3f}  mae {m['mae']:.2f}  winners {m['winners']}/{m['races']}"
+            f"  podium {m['podium']:.2f}/3  winner log-loss {m['winner_logloss']:.2f}"
+        )
+
+
+if __name__ == "__main__":
+    main()
