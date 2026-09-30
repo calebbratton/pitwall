@@ -126,3 +126,11 @@ def test_live_replay_streams_monitor_events(monkeypatch):
     assert "pit_calls" in kinds and kinds[-1] == "end"
     pit = next(d for e, d in _events(resp.text) if e == "pit_calls")
     assert {c["tla"] for c in pit["report"]["calls"]} == {"NOR", "VER"}
+
+
+def test_seasons_endpoint_and_out_of_window_sessions():
+    from src.seasons import supported_seasons
+
+    with _client(Scripted([]), Scripted([]), Scripted([])) as client:
+        assert client.get("/api/seasons").json() == supported_seasons()
+        assert client.get("/api/live/sessions", params={"year": 2019}).status_code == 404

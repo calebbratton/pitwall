@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -28,6 +28,7 @@ from src.livetiming.archive import ArchiveSession, list_sessions
 from src.livetiming.monitor import replay
 from src.llm.transcribe import RadioTranscriber
 from src.rag.index import RegulationIndex
+from src.seasons import out_of_scope_message, supported_seasons
 from src.tools.openf1 import HttpOpenF1Client
 
 log = logging.getLogger(__name__)
@@ -80,7 +81,12 @@ def _answer(values: dict[str, Any]) -> dict[str, Any]:
 def _default_graph():
     # Embedded Qdrant allows one client per storage folder, so the index is opened once.
     index = RegulationIndex()
-    graph = build_graph(HttpOpenF1Client(), index, checkpointer=memory_checkpointer())
+    graph = build_graph(
+        HttpOpenF1Client(),
+        index,
+        checkpointer=memory_checkpointer(),
+        seasons=supported_seasons(),
+    )
     return graph, index.close
 
 
@@ -110,6 +116,7 @@ def create_app(
     )
     app.get("/api/health")(health)
     app.post("/api/chat")(chat)
+    app.get("/api/seasons")(seasons)
     app.get("/api/live/sessions")(live_sessions)
     app.get("/api/live/replay")(live_replay)
     return app
@@ -148,8 +155,15 @@ def chat(req: ChatRequest, request: Request) -> StreamingResponse:
     )
 
 
+def seasons() -> list[int]:
+    """Seasons available to users (current and previous), newest first."""
+    return supported_seasons()
+
+
 def live_sessions(year: int) -> list[dict[str, str]]:
     """Races in F1's live-timing archive for `year` (for the replay picker)."""
+    if year not in supported_seasons():
+        raise HTTPException(404, out_of_scope_message(year))
     return list_sessions(year)
 
 

@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage
 
 from src.agents.graph import build_graph, memory_checkpointer
 from src.rag.index import RegulationIndex
+from src.seasons import supported_seasons
 from src.tools.openf1 import HttpOpenF1Client
 
 
@@ -23,7 +24,9 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     index = RegulationIndex()
-    graph = build_graph(HttpOpenF1Client(), index, checkpointer=memory_checkpointer())
+    graph = build_graph(
+        HttpOpenF1Client(), index, checkpointer=memory_checkpointer(), seasons=supported_seasons()
+    )
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     print("Pit Wall AI. Ask about a race or the regulations. Ctrl-D to quit.\n")
     try:

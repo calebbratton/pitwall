@@ -13,6 +13,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from src.seasons import supported_seasons
 from src.tools.models import Lap, RaceControlMessage
 from src.tools.openf1 import HttpOpenF1Client, OpenF1Client, Params
 from src.tools.telemetry import neutralised_windows
@@ -93,7 +94,7 @@ def ingest(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--years", type=int, nargs="+", default=[2026])
+    ap.add_argument("--years", type=int, nargs="+", default=supported_seasons())
     ap.add_argument("--sessions", nargs="+", default=["Race"])
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(message)s")

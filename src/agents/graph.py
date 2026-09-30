@@ -32,6 +32,7 @@ from src.llm.factory import Role, get_chat_model, with_schema
 from src.rag.glossary import expand_query
 from src.rag.index import RegulationIndex
 from src.rag.sources import source_for_race
+from src.seasons import out_of_scope_message
 from src.tools.openf1 import OpenF1Client, OpenF1Error
 from src.tools.telemetry import build_telemetry_tools, key_race_events, race_summary
 
@@ -92,6 +93,7 @@ def build_graph(
     models: dict[Role, BaseChatModel] | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     today: date | None = None,
+    seasons: list[int] | None = None,
 ):
     models = models or {}
 
@@ -152,6 +154,10 @@ def build_graph(
         decision = state["route"]
         steps = list(state["evaluation_steps"])
         race_context = state.get("race_context")
+
+        if seasons is not None and decision.year and decision.year not in seasons:
+            msg = out_of_scope_message(decision.year, _today())
+            return {"error": msg, "evaluation_steps": [*steps, f"resolve: {msg}"]}
 
         if decision.mode == "race" and decision.place:
             year = decision.year or _today().year

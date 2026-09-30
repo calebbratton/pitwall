@@ -243,3 +243,20 @@ def test_latest_race_resolves_to_most_recent_finished_session():
     state = _ask(graph, "What team had the best strategy last race?")
     assert state["race_context"]["session_key"] == 9523
     assert state["reg_context"] == {"season": 2024, "issue": 6}
+
+
+def test_seasons_outside_the_window_are_declined():
+    router = Scripted(
+        [RouteDecision(mode="race", year=2019, place="Monaco", focus="f", regulation_queries=["q"])]
+    )
+    analyst = Scripted([])
+    graph = build_graph(
+        MockOpenF1Client(MONACO_2024),
+        FakeIndex(["30.5"]),
+        models={"router": router, "fetcher": Scripted([]), "analyst": analyst},
+        today=date(2026, 9, 29),
+        seasons=[2026, 2025],
+    )
+    state = _ask(graph, "Monaco 2019 strategy?")
+    assert "covers the 2026 and 2025 seasons" in state["messages"][-1].content
+    assert analyst.calls == []
