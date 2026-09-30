@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import numpy as np
+import pytest
 
 from src.sim.backtest import score
 from src.sim.inputs import DriverInput, WeekendInputs
@@ -104,3 +105,21 @@ def test_predictions_leave_out_neutralisations_by_default():
     w.vsc_per_race, w.sc_per_race = 5.0, 5.0
     params = replace(BASE, grid_spacing=6.0, start_noise=0.1, lap_noise=0.05)
     assert simulate(w, params, sims=500, seed=6).probability(1)[1] < 0.05
+
+
+def test_calibration_flattens_and_keeps_totals():
+    from src.sim.calibrate import Calibration, apply, scale
+
+    p_win = np.array([0.9, 0.08, 0.02, 0.0, 0.0])
+    flat = scale(p_win, "win", 2.0, sims=1000)
+    assert flat.sum() == pytest.approx(1.0)
+    assert flat[0] < 0.9 and flat[-1] > 0  # overconfidence flattened, zeros get a chance
+    assert list(np.argsort(-flat, kind="stable")) == list(np.argsort(-p_win, kind="stable"))
+    podium = scale(np.array([1.0, 0.95, 0.9, 0.1, 0.05, 0.0]), "podium", 2.0, sims=1000)
+    assert podium.sum() == pytest.approx(3.0, abs=1e-3)
+    assert np.allclose(scale(p_win, "win", 1.0, sims=10**9), p_win, atol=1e-6)
+    table = [
+        {"tla": t, "expected": 1.0, "p_win": w, "p_podium": 0.6, "p_points": 1.0}
+        for t, w in zip("ABCDE", p_win, strict=True)
+    ]
+    assert apply(table, Calibration(), sims=10**9)[0]["p_win"] == pytest.approx(0.9, abs=1e-3)

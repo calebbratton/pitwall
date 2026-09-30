@@ -43,9 +43,12 @@ and rules, `docs/ROADMAP.md` for phases, `docs/SIMULATION.md` for the simulator 
    ×2/×5 and sprint-only race pace all leave the tuner at qualifying weight 1.0 (LORO rank corr
    0.860 either way). In 2026, qualifying pace already carries the race-pace information;
    `long_run_level="team"` is kept as an option.
-4. **AI additions agreed with the user (2026-09-30):** LLM-judge evals (DeepEval/Ragas:
-   faithfulness + retrieval precision, Qwen on Groq as judge) and probability calibration of the
-   pre-race model (isotonic / temperature scaling) first; then a regulations reranker, Bayesian
+4. **AI additions agreed with the user (2026-09-30):** ~~pre-race probability calibration~~ —
+   **done** (`python -m src.sim.calibrate`): one temperature per horizon, leave-one-race-out on
+   2026; win log-loss 1.57 → 1.53, podium 0.286 → 0.245, points 0.736 → 0.426 (raw sim was very
+   overconfident in the midfield). `predict` applies it (`--raw` to see the simulator's own
+   numbers); Madrid now NOR 32% / ANT 29%. Next: LLM-judge evals (DeepEval/Ragas:
+   faithfulness + retrieval precision, Qwen on Groq as judge); then a regulations reranker, Bayesian
    tyre priors (PyMC/NumPyro), radio → structured events, live anomaly detection, LightGBM
    rival pit model, tracing (Langfuse/LangSmith), voice, vision.
 5. Later: rejoin predictor / undercut check, rival pit-timing model (north star).

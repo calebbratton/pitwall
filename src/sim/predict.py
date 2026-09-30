@@ -10,6 +10,7 @@ Usage (after qualifying, once the sessions are in the warehouse):
 import argparse
 import json
 
+from src.sim.calibrate import DEFAULT_CALIBRATION, apply
 from src.sim.inputs import build_inputs
 from src.sim.race import simulate
 from src.warehouse.queries import connect
@@ -21,12 +22,15 @@ def main() -> None:
     ap.add_argument("--place", required=True)
     ap.add_argument("--laps", type=int, help="race distance (required before the race)")
     ap.add_argument("--sims", type=int, default=5000)
+    ap.add_argument("--raw", action="store_true", help="uncalibrated simulator probabilities")
     ap.add_argument("--json", action="store_true", help="print JSON instead of a table")
     args = ap.parse_args()
 
     inputs = build_inputs(connect(), args.year, args.place, laps=args.laps)
     prediction = simulate(inputs, sims=args.sims)
     table = prediction.table()
+    if not args.raw:
+        table = apply(table, DEFAULT_CALIBRATION, args.sims)
     notes = list(inputs.notes)
     if inputs.race_session_key is None:
         notes.append("grid = qualifying order (grid penalties not applied)")
@@ -58,7 +62,8 @@ def main() -> None:
     print(
         "- backtest (2026, out-of-sample, vs luck-adjusted results): rank corr. 0.86 "
         "(qualifying order 0.86, grid 0.83); winner log-loss 1.66 vs 1.76 for grid win rates. "
-        "Positions assume every car finishes and no SC/VSC luck."
+        "Positions assume every car finishes and no SC/VSC luck. Probabilities are calibrated "
+        "on 2026 results (the raw simulator is overconfident; --raw shows it)."
     )
 
 
