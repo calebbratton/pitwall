@@ -24,6 +24,8 @@ class DriverInput:
     grid: int
     quali_delta_s: float | None  # best qualifying lap minus the pole lap
     long_run_delta_s: float | None  # practice/sprint race pace vs the field median
+    form_s: float = 0.0  # team's race-vs-quali pace bias from earlier races (s/lap)
+    form_races: int = 0
 
 
 @dataclass
@@ -174,6 +176,53 @@ def _season_rates(con, year: int, exclude_meeting: int) -> tuple[float, float, i
     return (sc + 0.5 * vsc) / len(races), dnf / max(starters, 1), len(races)
 
 
+def _race_minus_quali(con, race_sk: int, quali_sk: int) -> dict[str, float]:
+    """Per team: race pace gap to the field (median clean lap, tyre-age corrected) minus the
+    qualifying gap to the field. Positive = worse in the race than qualifying suggested."""
+    race = dict(
+        con.execute(
+            """SELECT l.driver_number, median(l.lap_time - 0.05 * l.tyre_age)
+               FROM clean_laps l WHERE l.session_key = ? GROUP BY 1 HAVING count(*) >= 10""",
+            [race_sk],
+        ).fetchall()
+    )
+    quali = _quali_deltas(con, quali_sk)
+    teams = dict(
+        con.execute(
+            "SELECT driver_number, team_name FROM raw_drivers WHERE session_key = ?", [race_sk]
+        ).fetchall()
+    )
+    common = [d for d in race if d in quali and teams.get(d)]
+    if len(common) < 8:
+        return {}
+    race_med = statistics.median(race[d] for d in common)
+    quali_med = statistics.median(quali[d] for d in common)
+    by_team: dict[str, list[float]] = {}
+    for d in common:
+        by_team.setdefault(teams[d], []).append((race[d] - race_med) - (quali[d] - quali_med))
+    return {team: statistics.mean(v) for team, v in by_team.items()}
+
+
+def season_form(con, year: int, before, max_abs: float = 1.5) -> dict[str, tuple[float, int]]:
+    """Per team: mean race-vs-quali pace bias over this season's earlier races, and how many."""
+    weekends = con.execute(
+        """SELECT meeting_key,
+                  any_value(session_key) FILTER (session_name = 'Race'),
+                  any_value(session_key) FILTER (session_name = 'Qualifying')
+           FROM races WHERE year = ? GROUP BY meeting_key
+           HAVING min(date_start) < ?""",
+        [year, before],
+    ).fetchall()
+    samples: dict[str, list[float]] = {}
+    for _, race_sk, quali_sk in weekends:
+        if race_sk is None or quali_sk is None:
+            continue
+        for team, bias in _race_minus_quali(con, race_sk, quali_sk).items():
+            if abs(bias) <= max_abs:
+                samples.setdefault(team, []).append(bias)
+    return {team: (statistics.mean(v), len(v)) for team, v in samples.items()}
+
+
 def build_inputs(con, year: int, place: str, laps: int | None = None) -> WeekendInputs:
     meeting_key, sessions = weekend_sessions(con, year, place)
     race_sk = sessions.get("Race")
@@ -202,17 +251,15 @@ def build_inputs(con, year: int, place: str, laps: int | None = None) -> Weekend
     quali = _quali_deltas(con, quali_sk)
     long_run = _long_run_deltas(pace_sessions, laps_by_session, deg)
     names = _drivers(con, [sk for sk in sessions.values()])
-    drivers = [
-        DriverInput(
-            n,
-            names.get(n, (str(n), ""))[0],
-            names.get(n, ("", ""))[1],
-            pos,
-            quali.get(n),
-            long_run.get(n),
-        )
-        for n, pos in sorted(grid.items(), key=lambda kv: kv[1])
-    ]
+    weekend_start = con.execute(
+        "SELECT min(date_start) FROM races WHERE meeting_key = ?", [meeting_key]
+    ).fetchone()[0]
+    form = season_form(con, year, weekend_start)
+    drivers = []
+    for n, pos in sorted(grid.items(), key=lambda kv: kv[1]):
+        tla, team = names.get(n, (str(n), ""))
+        bias, n_races = form.get(team, (0.0, 0))
+        drivers.append(DriverInput(n, tla, team, pos, quali.get(n), long_run.get(n), bias, n_races))
 
     if laps is None:
         if race_sk is None:

@@ -71,6 +71,7 @@ def ingest(
     client: OpenF1Client | None = None,
     raw_dir: Path = RAW_DIR,
     now: datetime | None = None,
+    settle: timedelta = SETTLE,
 ) -> list[int]:
     client = client or HttpOpenF1Client()
     now = now or datetime.now(UTC)
@@ -82,7 +83,7 @@ def ingest(
                 end = session.get("date_end")
                 if session.get("is_cancelled") or not end:
                     continue
-                if datetime.fromisoformat(end) + SETTLE > now:
+                if datetime.fromisoformat(end) + settle > now:
                     continue  # future or too recent
                 if (raw_dir / "sessions" / f"{sk}.jsonl").exists():
                     continue
@@ -96,9 +97,16 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--years", type=int, nargs="+", default=supported_seasons())
     ap.add_argument("--sessions", nargs="+", default=["Race"])
+    ap.add_argument(
+        "--settle-minutes",
+        type=int,
+        default=int(SETTLE.total_seconds() // 60),
+        help="how long after a session ends before ingesting it (OpenF1 publishes free data "
+        "~30 min after the end; use ~45 on race weekends)",
+    )
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
-    new = ingest(args.years, args.sessions)
+    new = ingest(args.years, args.sessions, settle=timedelta(minutes=args.settle_minutes))
     print(f"Ingested {len(new)} new sessions.")
 
 

@@ -75,9 +75,23 @@ def backtest(year: int = 2026, params: SimParams | None = None, sims: int = 1000
         [year],
     ).fetchall()
     results: dict[str, list[Score]] = {"sim": [], "grid": [], "quali": []}
+    orders = {}
     for location, _ in meetings:
         inputs = build_inputs(con, year, location)
-        actual = actual_order(con, inputs)
+        orders[location] = (inputs, actual_order(con, inputs))
+    for location, _ in meetings:
+        inputs, actual = orders[location]
+        # Probabilistic grid baseline: P(win | grid slot) from the season's OTHER races.
+        wins = np.ones(len(inputs.drivers)) * 0.5  # Laplace-style smoothing
+        for other, (o_inputs, o_actual) in orders.items():
+            if other == location:
+                continue
+            winner = int(np.argmin(o_actual))
+            slot = o_inputs.drivers[winner].grid - 1
+            if slot < len(wins):
+                wins[slot] += 1
+        p_grid = np.array([wins[min(d.grid - 1, len(wins) - 1)] for d in inputs.drivers])
+        p_grid = p_grid / p_grid.sum()
         pred = simulate(inputs, params, sims=sims)
         grid = np.array([d.grid for d in inputs.drivers], dtype=float)
         quali = np.array(
@@ -88,7 +102,7 @@ def backtest(year: int = 2026, params: SimParams | None = None, sims: int = 1000
         )
         row = {
             "sim": score(pred.expected_position(), actual, pred.probability(1)),
-            "grid": score(grid, actual),
+            "grid": score(grid, actual, p_grid),
             "quali": score(quali, actual),
         }
         for k, v in row.items():

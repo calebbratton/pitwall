@@ -25,6 +25,8 @@ class SimParams:
     # Tuned (leave-one-race-out, 2026): long runs as extracted add noise, so quali dominates.
     quali_weight: float = 1.0  # blend of one-lap pace and long-run pace into race pace
     race_pace_scale: float = 0.9  # race-pace gaps ≈ this × qualifying gaps
+    form_weight: float = 0.5  # how much of a team's race-vs-quali bias to apply (tuned)
+    form_full_after: int = 5  # races of history for full weight (shrinks toward 0 before)
     missing_pace_per_grid_slot: float = 0.1  # s/lap per grid slot when a car has no pace data
     lap_noise: float = 0.35  # s, lap-to-lap variation
     start_noise: float = 0.6  # s, lap-1 shuffle
@@ -74,9 +76,11 @@ def race_pace(inputs: WeekendInputs, p: SimParams) -> np.ndarray:
         if d.long_run_delta_s is not None and p.quali_weight < 1:
             parts.append((d.long_run_delta_s, 1 - p.quali_weight))
         if parts:
-            paces.append(sum(v * w for v, w in parts) / sum(w for _, w in parts))
+            pace = sum(v * w for v, w in parts) / sum(w for _, w in parts)
         else:
-            paces.append(p.missing_pace_per_grid_slot * (d.grid - 1))
+            pace = p.missing_pace_per_grid_slot * (d.grid - 1)
+        shrink = min(d.form_races / p.form_full_after, 1.0)
+        paces.append(pace + p.form_weight * shrink * d.form_s)
     pace = np.array(paces)
     # Centre on the median so long-run (median-relative) and quali (pole-relative) parts mix.
     return pace - np.median(pace)
