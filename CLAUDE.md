@@ -8,6 +8,8 @@ grounded strategic verdict.
 This is a hobby/portfolio project run by one person. **Optimize for $0 running cost**. LLM inference is
 hosted (the dev machine is too weak for local models); everything else runs locally. Don't add paid services, hosted infra, or cloud dependencies unless asked.
 
+**Resuming work?** Read `docs/STATUS.md` (current state, run commands, next steps).
+
 **Season scope (user decision):** users get the **current season and the previous one** only —
 a rolling window from `src/seasons.py` (`supported_seasons()`), enforced in the chat graph, the
 API (`GET /api/seasons`) and warehouse ingest defaults. Older races (Monaco/Miami 2024) remain
