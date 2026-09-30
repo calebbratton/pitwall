@@ -29,6 +29,7 @@ DEFAULT_DEG = {"SOFT": 0.09, "MEDIUM": 0.06, "HARD": 0.045}
 DEFAULT_LIFE = {"SOFT": 30, "MEDIUM": 30, "HARD": 35, "INTERMEDIATE": 30, "WET": 40}
 CLIFF_S_PER_LAP2 = 0.08  # extra time per lap, per lap beyond the long-stint length
 RECENT_LAPS = 8
+TAKE_NEUTRALISED_STOP = 0.9  # share of cars needing a stop that take it under the current SC/VSC
 MIN_LAPS_FOR_PREDICTION = 3
 
 
@@ -192,6 +193,11 @@ def simulate_from(
     needs_stop = np.broadcast_to(must | wont_last, (sims, n))
     latest = np.clip(life - age[:1], 1, max(remaining - 1, 1))
     stop_lap = np.where(needs_stop, 1 + np.floor(rng.random((sims, n)) * latest).astype(int), -1)
+    if state.status in ("SAFETY_CAR", "VSC"):
+        # Cars that need a stop take the cheap one now (what the pit calls say and what teams
+        # do): most of the time, not always — some gamble on track position.
+        take_now = rng.random((sims, n)) < TAKE_NEUTRALISED_STOP
+        stop_lap = np.where(needs_stop & take_now, 1, stop_lap)
     new_deg = np.array(
         [state.deg.get("HARD" if c.compound != "HARD" else "MEDIUM", 0.05) for c in cars]
     )[None, :]
@@ -202,17 +208,17 @@ def simulate_from(
     deg = np.tile(deg_now, (sims, 1))
     life_now = np.tile(life, (sims, 1))
     running = np.ones((sims, n), dtype=bool)
+    neutralised_loss = {
+        "SAFETY_CAR": state.pit_loss_sc,
+        "VSC": (state.pit_loss_sc + state.pit_loss_green) / 2,
+    }.get(state.status, state.pit_loss_green)
 
     for lap in range(1, remaining + 1):
         order = np.argsort(T, axis=1)
         cliff = CLIFF_S_PER_LAP2 * np.maximum(age - life_now, 0) ** 1.5
         lap_time = pace + deg * age + cliff + rng.normal(0, p.lap_noise, (sims, n))
         pit_now = stop_lap == lap
-        loss = (
-            state.pit_loss_sc
-            if (lap == 1 and state.status == "SAFETY_CAR")
-            else state.pit_loss_green
-        )
+        loss = neutralised_loss if lap == 1 else state.pit_loss_green
         lap_time = lap_time + np.where(pit_now, loss, 0.0)
         age = np.where(pit_now, 0, age + 1)
         deg = np.where(pit_now, new_deg, deg)
