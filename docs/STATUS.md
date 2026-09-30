@@ -45,6 +45,8 @@ and rules, `docs/ROADMAP.md` for phases, `docs/SIMULATION.md` for the simulator 
    tyre priors (PyMC/NumPyro), radio → structured events, live anomaly detection, LightGBM
    rival pit model, tracing (Langfuse/LangSmith), voice, vision.
 5. Later: rejoin predictor / undercut check, rival pit-timing model (north star).
+6. After those: **season chat mode + like-track priors** (roadmap §9b). Track-fit analysis is
+   built as a CLI: `python -m src.analysis.track_fit --team McLaren`.
 
 ## Known caveats
 - Kuala Lumpur: no circuit history (last F1 race 2017); race distance assumed 56 laps.

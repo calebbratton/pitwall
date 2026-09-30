@@ -147,5 +147,18 @@ data makes the simulation accurate, and the LLM explains results rather than jud
 ### 9. Live
 - SignalR client + recorder; token-gated positions/telemetry for local use only.
 
+### 9b. Season analysis in chat (after the items above)
+- **"Season" chat mode**: route season-wide questions ("what type of track suits McLaren this
+  season?", "which team is best on high-speed tracks?") to `src/analysis/track_fit.py`
+  (measured circuit features vs luck-free team form; built, CLI only today) and have the
+  analyst explain the numbers.
+- **Like-track priors** (measured 2026-09-30: finishing order mostly follows qualifying pace,
+  which already captures car–track fit; overtaking difficulty only matters at low-drag tracks —
+  Monza 0.90 vs 0.79, Spa 0.98 vs 0.92): a circuit-type overtaking setting, first for the
+  in-race predictor; circuit-type priors for tyre severity and SC likelihood; early-week
+  predictions before practice. Richer circuit features from telemetry (full-throttle share,
+  slow vs fast corners).
+- Investigate Silverstone 2026 (pre-race rank correlation 0.35 — likely weather).
+
 ### 10. Context sources
 - Pirelli nominations, FIA stewards' documents, Jolpica results.
