@@ -58,6 +58,19 @@ order/points but not the win probabilities, or find why favourites get overrated
 Wet: 8 wet races 2023-25; a wet setting doesn't beat dry out of sample, so forecasts don't
 change predictions automatically (`predict --rain` is a what-if).
 
+## Race-weekend dry run (2026-09-30) and FP1 checklist
+Baku 2026 FP1 / qualifying / race replayed through the live code path. Fixed: missing archive
+topics (LapCount in practice) crashed replays; no session header outside races; blank gaps in
+practice/qualifying (now best-lap timing, qualifying per segment, KO); pit calls on a practice
+VSC test (pit calls / predictions / rejoin are race-only); session changeover on one connection
+(new live session per SessionInfo Key); venue-name mismatches (Sepang / Kuala Lumpur) for the
+pre-race lookup and Pirelli C-numbers; calibrated chances kept ordered.
+FP1 (Fri 2 Oct 04:30 UTC = Thu 23:30 CT): keep `PITWALL_LIVE_AUTOSTART=1 uvicorn src.api:app
+--port 8000` and the UI running; it records to data/livetiming/recordings/. Expect: session header
+"Practice 1", best-lap tower, weather + forecast, radio, run timeline; no track map unless
+MultiViewer publishes circuit 12 (Position.z needs the F1 TV token live). Not testable in
+advance: the real SignalR feed for a new session and the changeover FP1 -> FP2.
+
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.
