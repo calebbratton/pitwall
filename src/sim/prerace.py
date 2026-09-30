@@ -10,7 +10,6 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from src.livetiming.monitor import forecast_event
 from src.sim.calibrate import DEFAULT_CALIBRATION, apply
 from src.sim.inputs import build_inputs, weekend_sessions
 from src.sim.race import simulate
@@ -119,13 +118,10 @@ def grid_prediction_event(monitor) -> dict[str, Any] | None:
         if not ensure_weekend(snapshot.year, snapshot.location):
             log.warning("no qualifying data for %s %s", snapshot.location, snapshot.year)
             return None
-        forecast = forecast_event(monitor.state.topics.get("SessionInfo", {}))
+        # No automatic rain mixing: the wet setting showed no out-of-sample gain (src/sim/wet.py).
+        # The forecast is shown on its own (weather bar).
         prediction = grid_prediction(
-            snapshot.year,
-            snapshot.location,
-            snapshot.total_laps,
-            grid=monitor.starting_grid(),
-            p_rain=forecast["p_rain"] if forecast else None,
+            snapshot.year, snapshot.location, snapshot.total_laps, grid=monitor.starting_grid()
         )
     except Exception:
         log.exception("pre-race prediction failed")

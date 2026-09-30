@@ -48,13 +48,15 @@ cap) returns non-standard "borderline" verdicts and misses supported facts beyon
 extracts — e.g. it marked a correct Overtake claim (B7.2.3 c.ii) unsupported. Treat scores as a
 lower bound; a better judge (or TypeSafe Jev, see chat 2026-09-30) is worth testing.
 Wet setting and forecast mixing are in (`predict --rain P / --forecast`); WET_PARAMS provisional.
-Waiting on: the 2023-2025 ingest (running in the background, resumable:
-`python -m src.warehouse.ingest --years 2025 2024 2023 --sessions Qualifying Race "Practice 1"
-"Practice 2" "Practice 3" Sprint "Sprint Qualifying" "Sprint Shootout"`, then
-`python -m src.warehouse.build`). Then: `python -m src.analysis.predictors` (2025+2026 preview:
-qualifying pace beats qualifying+grid; team race pace in earlier races is the only extra signal),
-wet-race model (wet races: quali rank corr 0.65 vs 0.83 dry), re-judge evals with
-`--only unsafe-release overtake-mode --rejudge`.
+Historical study DONE (2023-26 all weekends in the warehouse, 85 races; results in
+data/study_2023_2026.txt): team race pace in earlier races is the only predictor beyond
+qualifying that helps every season (finish rank corr +0.069/+0.038/+0.007/+0.024; pace
++0.100/+0.046/+0.024/+0.010). Long runs, team race-vs-quali bias, driver Sunday gain: no.
+In the simulator (SimParams.team_pace_weight) it improves order every season but worsens
+calibrated winner log-loss 2024-26, so it's off by default — open question: use it for the
+order/points but not the win probabilities, or find why favourites get overrated.
+Wet: 8 wet races 2023-25; a wet setting doesn't beat dry out of sample, so forecasts don't
+change predictions automatically (`predict --rain` is a what-if).
 
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals

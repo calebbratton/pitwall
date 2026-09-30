@@ -26,6 +26,10 @@ class DriverInput:
     long_run_delta_s: float | None  # practice/sprint race pace vs the field median
     form_s: float = 0.0  # team's race-vs-quali pace bias from earlier races (s/lap)
     form_races: int = 0
+    # Team's race-pace gap to the fastest driver in this season's earlier races (s/lap, shrunk
+    # toward 0 with few races). The one pre-race signal beyond qualifying that helped in every
+    # season 2023-26 (src/analysis/predictors.py).
+    team_pace_s: float = 0.0
 
 
 @dataclass
@@ -265,6 +269,40 @@ def _race_minus_quali(con, race_sk: int, quali_sk: int) -> dict[str, float]:
     return {team: statistics.mean(v) for team, v in by_team.items()}
 
 
+TEAM_PACE_SHRINK = 2  # pseudo-races of "no gap" in the running mean
+
+
+def season_team_pace(con, year: int, before) -> dict[str, float]:
+    """Per team: race-pace gap to the fastest driver (% of a lap) over this season's earlier
+    races, shrunk toward 0: sum / (races + TEAM_PACE_SHRINK). Clean green laps only (tyre-age
+    corrected), so SC/VSC luck doesn't enter."""
+    races = con.execute(
+        """SELECT session_key FROM races WHERE year = ? AND session_name = 'Race'
+           AND date_start < ? ORDER BY date_start""",
+        [year, before],
+    ).fetchall()
+    gaps: dict[str, list[float]] = {}
+    for (race_sk,) in races:
+        rows = con.execute(
+            """SELECT d.team_name, median(l.lap_time - 0.05 * l.tyre_age) AS pace
+               FROM clean_laps l JOIN raw_drivers d
+                 ON d.session_key = l.session_key AND d.driver_number = l.driver_number
+               WHERE l.session_key = ? GROUP BY l.driver_number, d.team_name
+               HAVING count(*) >= 10""",
+            [race_sk],
+        ).fetchall()
+        if not rows:
+            continue
+        best = min(p for _, p in rows)
+        by_team: dict[str, list[float]] = {}
+        for team, pace in rows:
+            if team:
+                by_team.setdefault(team, []).append(100 * (pace - best) / best)
+        for team, pcts in by_team.items():
+            gaps.setdefault(team, []).append(statistics.mean(pcts))
+    return {team: sum(v) / (len(v) + TEAM_PACE_SHRINK) for team, v in gaps.items()}
+
+
 def season_form(con, year: int, before, max_abs: float = 1.5) -> dict[str, tuple[float, int]]:
     """Per team: mean race-vs-quali pace bias over this season's earlier races, and how many."""
     weekends = con.execute(
@@ -338,11 +376,31 @@ def build_inputs(
         "SELECT min(date_start) FROM races WHERE meeting_key = ?", [meeting_key]
     ).fetchone()[0]
     form = season_form(con, year, weekend_start)
+    team_pace = season_team_pace(con, year, weekend_start)
+    pole = (
+        con.execute("SELECT min(lap_time) FROM laps WHERE session_key = ?", [quali_sk]).fetchone()[
+            0
+        ]
+        if quali_sk
+        else None
+    ) or 90.0
     drivers = []
     for n, pos in sorted(grid.items(), key=lambda kv: kv[1]):
         tla, team = names.get(n, (str(n), ""))
         bias, n_races = form.get(team, (0.0, 0))
-        drivers.append(DriverInput(n, tla, team, pos, quali.get(n), long_run.get(n), bias, n_races))
+        drivers.append(
+            DriverInput(
+                n,
+                tla,
+                team,
+                pos,
+                quali.get(n),
+                long_run.get(n),
+                bias,
+                n_races,
+                team_pace_s=team_pace.get(team, 0.0) * pole / 100,
+            )
+        )
 
     if laps is None:
         if race_sk is None:

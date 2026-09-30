@@ -28,8 +28,11 @@ WET_GRID = {
     "lap_noise": [0.35, 0.9, 1.5, 2.5],
     "start_noise": [2.0, 4.0],
 }
-# PROVISIONAL until tuned on 2023-26 wet races with `python -m src.sim.wet` (after the ingest).
-WET_PARAMS = replace(SimParams(), race_pace_scale=0.5, lap_noise=1.5, start_noise=2.0)
+# Tuned on the 8 wet races of 2023-25 (python -m src.sim.wet, 2026-09-30): best is smaller pace
+# gaps (race_pace_scale 0.3), but leave-one-race-out it does NOT beat the dry setting (rank corr
+# 0.714 vs 0.709, winner log-loss 2.08 vs 2.00): wet races weren't much less predictable than
+# dry ones. So forecasts don't change predictions automatically; `predict --rain` is a what-if.
+WET_PARAMS = replace(SimParams(), race_pace_scale=0.3)
 MIN_WET_CARS = 10
 
 
