@@ -3,6 +3,22 @@
 Goal: use every publicly available data source to inform strategy calls — weather, tyres and
 degradation, driving style, race state — live and in post-race review.
 
+## Product (user decision, 2026-09-30): a watch companion
+A second screen next to F1 TV, not a replacement: F1 TV shows what is happening; Pit Wall AI says
+what matters and whether calls were right. Push, don't pull: a short stream of strategy alerts at
+the moments that matter; every alert type needs a measured hit rate before it's shown.
+- **Live dashboard:** timing tower, SC/VSC alert stream (pit calls, who wins from here), radio
+  transcripts (follow one driver), live strategy chat.
+- **Post-race chat:** "was pitting the right call for <driver>?" answered with measured numbers,
+  not LLM guesses.
+- **Pit decision review engine** (shared by both chats): rebuild the race state before the
+  decision (archive replay / live per-lap snapshots), measure tyre deltas from that race (fresh
+  vs old from cars that stopped, the driver's own degradation, C-number life, measured pit
+  loss), simulate pit now vs stay out 1-N laps vs no stop, report expected position + P(gain) +
+  the deltas used. Validate against what happened after real stops (85 races) before trusting.
+- Pre-race order prediction is near its ceiling (qualifying explains most of it): frozen as a
+  panel, not the focus.
+
 ## North star: predict rivals' strategy, then beat it
 
 "If I'm managing Red Bull, when will McLaren stop — and when should we go to undercut them?"
