@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from src.sim.inputs import WeekendInputs, build_inputs
+from src.sim.luck import neutralisation_luck
 from src.sim.race import SimParams, simulate
 from src.warehouse.queries import connect
 
@@ -33,9 +34,19 @@ def _ranks(values: np.ndarray) -> np.ndarray:
     return ranks
 
 
-def actual_order(con, inputs: WeekendInputs) -> np.ndarray:
+def actual_order(con, inputs: WeekendInputs, adjusted: bool = True) -> np.ndarray:
     """Finishing rank per input driver among classified finishers; NaN for DNF/DNS/DSQ.
-    Retirements are unpredictable noise for a pace model, so scoring ignores them."""
+
+    `adjusted` (default): the luck-adjusted result — safety car / VSC / red flag gains and losses
+    removed (see luck.py), so e.g. Norris is Madrid 2026's winner. Neither retirements nor
+    neutralisation timing are predictable, so the model is never scored on them."""
+    if adjusted:
+        report = neutralisation_luck(con, inputs.race_session_key, inputs.pit_loss_green)
+        rank_of = {d: i + 1 for i, d in enumerate(report.adjusted_order)}
+        ranks = np.array([rank_of.get(d.number, np.nan) for d in inputs.drivers], dtype=float)
+        finished = ~np.isnan(ranks)
+        ranks[finished] = _ranks(ranks[finished])
+        return ranks
     rows = {
         n: (pos, bool(dnf or dns or dsq))
         for n, pos, dnf, dns, dsq in con.execute(
@@ -90,7 +101,8 @@ def backtest(year: int = 2026, params: SimParams | None = None, sims: int = 1000
         orders[location] = (inputs, actual_order(con, inputs))
     for location, _ in meetings:
         inputs, actual = orders[location]
-        # Probabilistic grid baseline: P(win | grid slot) from the season's OTHER races.
+        # Probabilistic grid baseline: P(win | grid slot) from the season's OTHER races
+        # (luck-adjusted winners, so no one gains from SC/VSC timing).
         wins = np.ones(len(inputs.drivers)) * 0.5  # Laplace-style smoothing
         for other, (o_inputs, o_actual) in orders.items():
             if other == location:

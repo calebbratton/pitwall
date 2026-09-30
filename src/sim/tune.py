@@ -18,10 +18,9 @@ from src.sim.race import SimParams, simulate
 from src.warehouse.queries import connect
 
 GRID = {
-    "quali_weight": [0.85, 1.0],
-    "form_weight": [0.0, 0.5, 1.0, 1.5],
-    "pass_threshold": [0.3, 0.5, 0.8],
-    "start_noise": [0.3, 0.6],
+    "pass_threshold": [0.5, 0.8, 1.2],
+    "start_noise": [0.6, 1.0, 1.5, 2.0],
+    "lap_noise": [0.35, 0.6, 0.9],
 }
 
 

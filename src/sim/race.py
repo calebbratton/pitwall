@@ -28,19 +28,25 @@ class SimParams:
     # Tuned (leave-one-race-out, 2026): long runs as extracted add noise, so quali dominates.
     quali_weight: float = 1.0  # blend of one-lap pace and long-run pace into race pace
     race_pace_scale: float = 0.9  # race-pace gaps ≈ this × qualifying gaps
-    form_weight: float = 0.5  # how much of a team's race-vs-quali bias to apply (tuned)
+    # Team race-vs-quali bias: tuned to 0 against luck-adjusted results (it was partly SC luck).
+    form_weight: float = 0.0
     form_full_after: int = 5  # races of history for full weight (shrinks toward 0 before)
     missing_pace_per_grid_slot: float = 0.1  # s/lap per grid slot when a car has no pace data
     lap_noise: float = 0.35  # s, lap-to-lap variation
-    start_noise: float = 0.6  # s, lap-1 shuffle
+    # s, lap-1 shuffle. Tuned to 2.0 (grid edge): it also absorbs race randomness the model
+    # doesn't represent, which keeps win probabilities calibrated.
+    start_noise: float = 2.0
     grid_spacing: float = 0.3  # s per grid slot at the end of lap 1 (before the shuffle)
-    pass_threshold: float = 0.3  # s/lap advantage for a 50% pass chance (tuned, 12/15 folds)
+    pass_threshold: float = 1.2  # s/lap advantage for a 50% pass chance (tuned; grid edge)
     pass_scale: float = 0.2  # logistic width of the pass curve
     min_gap: float = 0.4  # s, closest a held car can follow
     dirty_air: float = 0.2  # s lost per lap stuck behind a car
     stop_window: tuple[float, float] = (0.3, 0.65)  # fraction of race distance
     vsc_pace_factor: float = 1.35  # VSC laps take ~35% longer (delta time to hold)
     include_dnfs: bool = False
+    # SC/VSC timing is unpredictable luck: race predictions leave it out (pure pace + strategy).
+    # The live pit-wall tools switch it on.
+    include_neutralisations: bool = False
 
 
 @dataclass(frozen=True)
@@ -112,8 +118,8 @@ def simulate(
     dnf_lap = np.where(
         rng.random((sims, n)) < dnf_prob, rng.integers(1, laps + 1, (sims, n)), laps + 1
     )
-    sc_hazard = inputs.sc_per_race / laps
-    vsc_hazard = inputs.vsc_per_race / laps
+    sc_hazard = inputs.sc_per_race / laps if p.include_neutralisations else 0.0
+    vsc_hazard = inputs.vsc_per_race / laps if p.include_neutralisations else 0.0
     sc_left = np.zeros(sims)  # laps of SC remaining
     vsc_left = np.zeros(sims)  # laps of VSC remaining (fractional)
 

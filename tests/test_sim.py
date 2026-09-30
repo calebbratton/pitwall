@@ -6,6 +6,11 @@ from src.sim.backtest import score
 from src.sim.inputs import DriverInput, WeekendInputs
 from src.sim.race import SimParams, race_pace, simulate
 
+# Mechanics tests use fixed settings, independent of the tuned defaults (which change on retune).
+BASE = SimParams(
+    quali_weight=1.0, form_weight=0.0, pass_threshold=0.5, start_noise=0.6, lap_noise=0.35
+)
+
 
 def _weekend(n=10, gaps=0.2, dnf=0.0, sc=0.0, laps=50):
     drivers = [
@@ -18,7 +23,7 @@ def _weekend(n=10, gaps=0.2, dnf=0.0, sc=0.0, laps=50):
 
 
 def test_faster_cars_from_the_front_usually_win_and_output_is_consistent():
-    pred = simulate(_weekend(), sims=500, seed=1)
+    pred = simulate(_weekend(), BASE, sims=500, seed=1)
     assert pred.positions.shape == (500, 10)
     # Every simulated race is a permutation of 1..n.
     assert (np.sort(pred.positions, axis=1) == np.arange(1, 11)).all()
@@ -30,23 +35,21 @@ def test_faster_cars_from_the_front_usually_win_and_output_is_consistent():
 
 
 def test_seeded_runs_are_reproducible():
-    a = simulate(_weekend(), sims=200, seed=7).positions
-    b = simulate(_weekend(), sims=200, seed=7).positions
+    a = simulate(_weekend(), BASE, sims=200, seed=7).positions
+    b = simulate(_weekend(), BASE, sims=200, seed=7).positions
     assert (a == b).all()
 
 
 def test_harder_passing_keeps_a_fast_car_stuck_behind():
     w = _weekend(gaps=0.0)
     w.drivers[-1].quali_delta_s = -1.0  # fastest car starts last
-    easy = simulate(w, replace(SimParams(), pass_threshold=0.2), sims=400, seed=2)
-    hard = simulate(w, replace(SimParams(), pass_threshold=2.0), sims=400, seed=2)
+    easy = simulate(w, replace(BASE, pass_threshold=0.2), sims=400, seed=2)
+    hard = simulate(w, replace(BASE, pass_threshold=2.0), sims=400, seed=2)
     assert easy.expected_position()[-1] < hard.expected_position()[-1] - 2
 
 
 def test_retirements_cap_points_probability():
-    pred = simulate(
-        _weekend(n=20, dnf=0.3), replace(SimParams(), include_dnfs=True), sims=1000, seed=3
-    )
+    pred = simulate(_weekend(n=20, dnf=0.3), replace(BASE, include_dnfs=True), sims=1000, seed=3)
     # Retired cars are classified last, so the favourite's P(points) ~ P(finishing) ~ 0.7.
     assert 0.6 < pred.probability(10)[0] < 0.8
 
@@ -54,7 +57,7 @@ def test_retirements_cap_points_probability():
 def test_race_pace_blends_and_centres():
     w = _weekend()
     w.drivers[3].quali_delta_s = None  # no quali lap: placed by grid slot
-    pace = race_pace(w, SimParams())
+    pace = race_pace(w, BASE)
     assert abs(np.median(pace)) < 1e-9
     assert pace[0] < pace[5]
 
@@ -66,7 +69,7 @@ def test_score_metrics():
 
 
 def test_dnfs_ignored_by_default():
-    pred = simulate(_weekend(n=20, dnf=0.9), sims=300, seed=4)
+    pred = simulate(_weekend(n=20, dnf=0.9), BASE, sims=300, seed=4)
     assert pred.probability(1)[0] > 0.5  # a 90% retirement rate changes nothing
 
 
@@ -79,7 +82,9 @@ def test_vsc_timing_can_cost_the_leader_the_race():
         w.vsc_per_race, w.pit_loss_vsc, w.pit_loss_green = vsc, 14.0, 22.0
         return w
 
-    params = replace(SimParams(), grid_spacing=6.0, start_noise=0.1, lap_noise=0.05)
+    params = replace(
+        BASE, grid_spacing=6.0, start_noise=0.1, lap_noise=0.05, include_neutralisations=True
+    )
     calm = simulate(two_cars(0.0), params, sims=2000, seed=5)
     vscs = simulate(two_cars(3.0), params, sims=2000, seed=5)
     assert calm.probability(1)[1] < 0.1  # without neutralisations the chaser rarely wins
@@ -92,3 +97,10 @@ def test_score_ignores_non_finishers():
     actual = np.array([1.0, np.nan, 2, 3])  # car 2 retired
     s = score(np.array([1.0, 2, 3, 4]), actual, np.array([0.6, 0.3, 0.1, 0.0]))
     assert s.spearman == 1.0 and s.mae == 0 and s.winner_hit
+
+
+def test_predictions_leave_out_neutralisations_by_default():
+    w = _weekend(n=2, gaps=0.0)
+    w.vsc_per_race, w.sc_per_race = 5.0, 5.0
+    params = replace(BASE, grid_spacing=6.0, start_noise=0.1, lap_noise=0.05)
+    assert simulate(w, params, sims=500, seed=6).probability(1)[1] < 0.05

@@ -13,6 +13,13 @@ a rolling window from `src/seasons.py` (`supported_seasons()`), enforced in the 
 API (`GET /api/seasons`) and warehouse ingest defaults. Older races (Monaco/Miami 2024) remain
 as test fixtures only.
 
+**Luck principle (user decision):** safety car / VSC / red flag timing and retirements are
+unpredictable, so (1) race predictions leave them out, and (2) **anything learned or scored from
+past results uses luck-adjusted outcomes** (`src/sim/luck.py`) — a driver or team must never gain
+favour in the model from neutralisation luck (e.g. Antonelli's Madrid 2026 win is Norris's in
+the adjusted result). The live pit-wall tools still model SC/VSC, because there they're the
+situation being decided on.
+
 **Direction:** an all-encompassing race strategy platform built on public data. See
 `docs/ROADMAP.md` (data inventory, principles, phases) before starting new features.
 
