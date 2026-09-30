@@ -5,8 +5,12 @@ degradation, driving style, race state — live and in post-race review.
 
 ## Product (user decision, 2026-09-30): a watch companion
 A second screen next to F1 TV, not a replacement: F1 TV shows what is happening; Pit Wall AI says
-what matters and whether calls were right. Push, don't pull: a short stream of strategy alerts at
-the moments that matter; every alert type needs a measured hit rate before it's shown.
+what matters and whether calls were right. **Push, don't pull** (the user's favourite framing):
+nobody wants to stare at another dashboard during a race; the value is a short stream of alerts at
+the moments that matter — "SC: Norris should pit, Russell stay out." / "Leclerc's undercut on
+Hamilton is on." / "Piastri's softs are past anything seen this year." Alerts are event-triggered
+(not on an interval), fire only when material, persist 2 laps and update in place, are ranked
+under a rate budget, and are resolved afterwards ("undercut worked, +1"); every alert type needs a measured hit rate before it's shown.
 - **Live dashboard:** timing tower, SC/VSC alert stream (pit calls, who wins from here), radio
   transcripts (follow one driver), live strategy chat.
 - **Post-race chat:** "was pitting the right call for <driver>?" answered with measured numbers,
