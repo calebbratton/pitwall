@@ -67,7 +67,11 @@ class LiveSession:
         fresh from the monitor: the last *published* snapshot can predate the state (the feed's
         initial state arrives in one burst inside the snapshot throttle, and between sessions
         nothing new is published)."""
-        events = [self._latest[k] for k in ("session", "track") if k in self._latest]
+        events = [
+            self._latest[k]
+            for k in ("session", "track", "weather", "forecast")
+            if k in self._latest
+        ]
         snap = self.monitor.snapshot()
         if snap.track_status != "UNKNOWN":
             events.append(

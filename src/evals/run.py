@@ -105,7 +105,12 @@ def judge_faithfulness(run: dict, judge) -> dict:
     return {
         "score": metric.score,
         "reason": metric.reason,
-        "unsupported": [v.reason for v in metric.verdicts if v.verdict.strip().lower() == "no"],
+        # Claims the judge couldn't find in the context ("no" = contradicted, "idk" = absent).
+        "unsupported": [
+            {"claim": claim, "verdict": v.verdict, "reason": v.reason}
+            for claim, v in zip(metric.claims, metric.verdicts, strict=False)
+            if v.verdict.strip().lower() != "yes"
+        ],
     }
 
 

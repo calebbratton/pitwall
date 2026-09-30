@@ -206,3 +206,23 @@ def test_on_grid_fires_once_with_the_official_grid():
     calls.clear()
     asyncio.run(collect(_grid_messages("Qualifying")))
     assert calls == []
+
+
+def test_weather_event_and_session_start():
+    from datetime import UTC, datetime
+
+    from src.livetiming.monitor import forecast_event, session_start_utc, weather_event
+
+    e = weather_event({"AirTemp": "26.2", "TrackTemp": "47.3", "Rainfall": "1", "WindSpeed": "0.4"})
+    assert e["track_c"] == 47.3 and e["raining"] is True and e["humidity"] is None
+    assert weather_event({"AirTemp": "20"}) is None
+    info = {
+        "StartDate": "2026-09-26T15:00:00",
+        "GmtOffset": "04:00:00",
+        "Meeting": {"Location": "Baku"},
+    }
+    assert session_start_utc(info) == datetime(2026, 9, 26, 11, 0, tzinfo=UTC)
+    assert session_start_utc(
+        {"StartDate": "2026-06-07T14:00:00", "GmtOffset": "-04:00:00"}
+    ) == datetime(2026, 6, 7, 18, 0, tzinfo=UTC)
+    assert forecast_event(info) is None  # forecasts are blocked in tests: no event, no crash

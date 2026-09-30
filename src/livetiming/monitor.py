@@ -17,10 +17,11 @@ Events (dicts with a "type"):
 """
 
 import asyncio
+import logging
 import statistics
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from src.livetiming.archive import STATIC, STRATEGY_TOPICS, ArchiveSession, Message
@@ -30,9 +31,11 @@ from src.livetiming.snapshot import TRACK_STATUS, RaceSnapshot, build_snapshot
 from src.livetiming.state import TimingState
 from src.livetiming.strategy import pit_calls
 from src.livetiming.track import latest_positions, track_outline
+from src.weather.forecast import race_rain
 
 NEUTRALISED = {"SAFETY_CAR", "VSC"}
-REPLAY_TOPICS = (*STRATEGY_TOPICS, "TeamRadio", "Position.z")
+log = logging.getLogger(__name__)
+REPLAY_TOPICS = (*STRATEGY_TOPICS, "TeamRadio", "Position.z", "WeatherData")
 
 
 def snapshot_event(
@@ -67,6 +70,61 @@ def snapshot_event(
         "pit_loss": losses(pit_loss),
         "lap_time_s": lap_time_s,
         "rejoin": rejoin_table(snap, pit_loss),
+    }
+
+
+def _float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def weather_event(data: dict[str, Any]) -> dict[str, Any] | None:
+    """`weather` event from a WeatherData message (published about once a minute)."""
+    if not isinstance(data, dict) or "TrackTemp" not in data:
+        return None
+    return {
+        "type": "weather",
+        "air_c": _float(data.get("AirTemp")),
+        "track_c": _float(data.get("TrackTemp")),
+        "humidity": _float(data.get("Humidity")),
+        "wind_ms": _float(data.get("WindSpeed")),
+        "wind_dir": _float(data.get("WindDirection")),
+        "raining": str(data.get("Rainfall", "0")) not in ("0", "", "False", "false"),
+    }
+
+
+def session_start_utc(info: dict[str, Any]) -> datetime | None:
+    """SessionInfo StartDate is local circuit time; GmtOffset ("04:00:00" / "-05:00:00") maps it
+    to UTC."""
+    try:
+        local = datetime.fromisoformat(str(info["StartDate"]))
+        sign = -1 if str(info.get("GmtOffset", "")).startswith("-") else 1
+        h, m, *_ = (int(x) for x in str(info.get("GmtOffset", "0:0")).lstrip("-").split(":"))
+        return (local - sign * timedelta(hours=h, minutes=m)).replace(tzinfo=UTC)
+    except (KeyError, ValueError):
+        return None
+
+
+def forecast_event(info: dict[str, Any]) -> dict[str, Any] | None:
+    """`forecast` event: Open-Meteo rain chance over the session window (live sessions only:
+    forecasts don't cover the past)."""
+    start = session_start_utc(info)
+    location = (info.get("Meeting") or {}).get("Location") or ""
+    if start is None or not location:
+        return None
+    try:
+        outlook = race_rain(location, start)
+    except Exception as e:  # noqa: BLE001 — no forecast is fine; never break the feed
+        log.info("no rain forecast for %s: %s", location, e)
+        return None
+    return {
+        "type": "forecast",
+        "location": location,
+        "p_rain": outlook.p_rain,
+        "mm": outlook.mm,
+        "hourly": [{"utc": t, "p": p, "mm": mm} for t, p, mm in outlook.hourly],
     }
 
 
@@ -212,6 +270,10 @@ class RaceMonitor:
                         }
                     )
             self._race_control_seen = len(messages)
+
+        if message.topic == "WeatherData" and (event := weather_event(message.data)):
+            event["lap"] = self.snapshot().current_lap
+            events.append(event)
 
         if message.topic == "TeamRadio":
             captures = topics["TeamRadio"].get("Captures") or []
@@ -362,6 +424,8 @@ async def pump(
                 if circuit:
                     monitor.pit_loss = circuit.pit_loss
                     events.insert(0, circuit.track_event())
+                if forecast := await asyncio.to_thread(forecast_event, message.data):
+                    events.append(forecast)
             if quiet:
                 events = [e for e in events if e["type"] in ("session", "track")]
             for event in events:
