@@ -31,12 +31,11 @@ class SimParams:
     # Team race-vs-quali bias: tuned to 0 against luck-adjusted results (it was partly SC luck).
     form_weight: float = 0.0
     form_full_after: int = 5  # races of history for full weight (shrinks toward 0 before)
-    # Weight on the team's race pace in earlier races (DriverInput.team_pace_s, recency-weighted,
-    # half-life 3 races). 2023-26 (85 races): 0.25 picks 53 winners vs 52 for pole and 51
-    # without it, and calibrated winner log-loss 1.176 -> 1.151. 0.5 calibrates a bit better
-    # (1.123) but overrides small qualifying margins at the front: 49 winners, 5/15 in 2026.
-    # Revisit as the 2026 regs mature (user: fields converge year on year).
-    team_pace_weight: float = 0.25
+    # Weight on the driver's race pace in earlier races (DriverInput.race_pace_s, recency-weighted,
+    # half-life 3 races). 2023-26 (85 races, 4000 sims x 3 seeds): 0.25 picks 58 winners (pole:
+    # 52, none: ~56), calibrated winner log-loss 1.085 (none: 1.159); 0.5 calibrates slightly
+    # better (1.074) but picks 55. Revisit as the 2026 regs mature (fields converge yearly).
+    race_pace_weight: float = 0.25
     missing_pace_per_grid_slot: float = 0.1  # s/lap per grid slot when a car has no pace data
     lap_noise: float = 0.35  # s, lap-to-lap variation
     # s, lap-1 shuffle. Tuned to 2.0 (grid edge): it also absorbs race randomness the model
@@ -123,7 +122,7 @@ def race_pace(inputs: WeekendInputs, p: SimParams) -> np.ndarray:
         else:
             pace = p.missing_pace_per_grid_slot * (d.grid - 1)
         shrink = min(d.form_races / p.form_full_after, 1.0)
-        paces.append(pace + p.form_weight * shrink * d.form_s + p.team_pace_weight * d.team_pace_s)
+        paces.append(pace + p.form_weight * shrink * d.form_s + p.race_pace_weight * d.race_pace_s)
     pace = np.array(paces)
     # Centre on the median so long-run (median-relative) and quali (pole-relative) parts mix.
     return pace - np.median(pace)

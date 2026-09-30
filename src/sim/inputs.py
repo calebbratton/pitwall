@@ -26,10 +26,11 @@ class DriverInput:
     long_run_delta_s: float | None  # practice/sprint race pace vs the field median
     form_s: float = 0.0  # team's race-vs-quali pace bias from earlier races (s/lap)
     form_races: int = 0
-    # Team's race-pace gap to the fastest driver in this season's earlier races (s/lap, shrunk
-    # toward 0 with few races). The one pre-race signal beyond qualifying that helped in every
-    # season 2023-26 (src/analysis/predictors.py).
-    team_pace_s: float = 0.0
+    # The driver's race-pace gap to the fastest driver in this season's earlier races (s/lap,
+    # recency-weighted, shrunk toward 0 with few races). The one pre-race signal beyond
+    # qualifying that helped in every season 2023-26; per driver beat the team average
+    # (2023-26: 58 vs 56 winners of 85, calibrated winner log-loss 1.085 vs 1.100).
+    race_pace_s: float = 0.0
 
 
 @dataclass
@@ -269,15 +270,20 @@ def _race_minus_quali(con, race_sk: int, quali_sk: int) -> dict[str, float]:
     return {team: statistics.mean(v) for team, v in by_team.items()}
 
 
-TEAM_PACE_SHRINK = 2  # pseudo-races of "no gap" in the running mean
+RACE_PACE_SHRINK = 2  # pseudo-races of "no gap" in the running mean
 # races; None = plain season mean. 3 races: the front converges within a season (2026: top-two
 # gap 0.53% -> 0.15%), and recency-weighting fixed the overrated early leaders.
-TEAM_PACE_HALF_LIFE: float | None = 3.0
+RACE_PACE_HALF_LIFE: float | None = 3.0
 
 
-def season_team_pace(con, year: int, before, half_life: float | None = None) -> dict[str, float]:
-    """Per team: race-pace gap to the fastest driver (% of a lap) over this season's earlier
-    races, shrunk toward 0: sum / (races + TEAM_PACE_SHRINK). Clean green laps only (tyre-age
+def season_race_pace(
+    con, year: int, before, half_life: float | None = None, by: str = "team"
+) -> dict:
+    """`by="team"` keys by team name (both cars averaged per race); `by="driver"` keys by car
+    number (each driver's own race pace).
+
+    Per team: race-pace gap to the fastest driver (% of a lap) over this season's earlier
+    races, shrunk toward 0: sum / (races + RACE_PACE_SHRINK). Clean green laps only (tyre-age
     corrected), so SC/VSC luck doesn't enter."""
     races = con.execute(
         """SELECT session_key FROM races WHERE year = ? AND session_name = 'Race'
@@ -287,7 +293,8 @@ def season_team_pace(con, year: int, before, half_life: float | None = None) -> 
     gaps: dict[str, list[float]] = {}
     for (race_sk,) in races:
         rows = con.execute(
-            """SELECT d.team_name, median(l.lap_time - 0.05 * l.tyre_age) AS pace
+            f"""SELECT {"d.team_name" if by == "team" else "l.driver_number"},
+                      median(l.lap_time - 0.05 * l.tyre_age) AS pace
                FROM clean_laps l JOIN raw_drivers d
                  ON d.session_key = l.session_key AND d.driver_number = l.driver_number
                WHERE l.session_key = ? GROUP BY l.driver_number, d.team_name
@@ -304,13 +311,13 @@ def season_team_pace(con, year: int, before, half_life: float | None = None) -> 
         for team, pcts in by_team.items():
             gaps.setdefault(team, []).append(statistics.mean(pcts))
     if half_life is None:
-        return {team: sum(v) / (len(v) + TEAM_PACE_SHRINK) for team, v in gaps.items()}
+        return {team: sum(v) / (len(v) + RACE_PACE_SHRINK) for team, v in gaps.items()}
     # Recency-weighted: the field converges during a season (2026: the top-two gap fell from
     # 0.53% to 0.15% of a lap), so older races count less. Shrinkage uses the same weights.
     out = {}
     for team, v in gaps.items():
         w = [0.5 ** ((len(v) - 1 - i) / half_life) for i in range(len(v))]
-        out[team] = sum(x * wi for x, wi in zip(v, w, strict=True)) / (sum(w) + TEAM_PACE_SHRINK)
+        out[team] = sum(x * wi for x, wi in zip(v, w, strict=True)) / (sum(w) + RACE_PACE_SHRINK)
     return out
 
 
@@ -387,7 +394,9 @@ def build_inputs(
         "SELECT min(date_start) FROM races WHERE meeting_key = ?", [meeting_key]
     ).fetchone()[0]
     form = season_form(con, year, weekend_start)
-    team_pace = season_team_pace(con, year, weekend_start, half_life=TEAM_PACE_HALF_LIFE)
+    race_pace = season_race_pace(
+        con, year, weekend_start, half_life=RACE_PACE_HALF_LIFE, by="driver"
+    )
     pole = (
         con.execute("SELECT min(lap_time) FROM laps WHERE session_key = ?", [quali_sk]).fetchone()[
             0
@@ -409,7 +418,7 @@ def build_inputs(
                 long_run.get(n),
                 bias,
                 n_races,
-                team_pace_s=team_pace.get(team, 0.0) * pole / 100,
+                race_pace_s=race_pace.get(n, 0.0) * pole / 100,
             )
         )
 

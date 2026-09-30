@@ -113,9 +113,9 @@ def main() -> None:
     for note in notes:
         print(f"- {note}")
     print(
-        "- backtest (vs luck-adjusted results): qualifying pace + recency-weighted team race pace; "
-        "2026: rank corr 0.864 (qualifying order 0.857), 8/15 winners (= pole), calibrated winner "
-        "log-loss 1.42 (leave-one-race-out). "
+        "- backtest (vs luck-adjusted results): qualifying pace + the driver's recent race pace; "
+        "2026: rank corr 0.868 (qualifying order 0.857), 8/15 winners (= pole), calibrated winner "
+        "log-loss 1.40 (leave-one-race-out); 2023-26: 58/85 winners vs 52 for pole. "
         "Positions assume every car finishes and no SC/VSC luck. Probabilities are calibrated "
         "on 2026 results (the raw simulator is overconfident; --raw shows it)."
     )
