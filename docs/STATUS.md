@@ -35,10 +35,14 @@ and rules, `docs/ROADMAP.md` for phases, `docs/SIMULATION.md` for the simulator 
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.
-2. **Tyre life from measured wear / drop-off by C-number** (stint lengths are strategy-driven,
-   not physical) — `reference/pirelli_nominations_2026.json` has all 2026 C-numbers.
-3. Improve the practice long-run signal (team-level, fuel-corrected, sprint-weighted) so
-   pre-race predictions beat qualifying order.
+2. ~~Tyre life from measured wear by C-number~~ — **done** (`python -m src.models.tyre_curves`):
+   2026 race data shows no drop-off (teams pit first), so life = proven lower bound (C2 43, C3/C4
+   39, C1/C5 31 laps); the in-race predictor and tyre notes use it. Follow-up: re-run the
+   in-race calibration with curves fitted per fold (the 0.3 s/lap calibration predates them).
+3. ~~Practice long-run signal~~ — **tested, negative**: team-level long runs, sprint weighting
+   ×2/×5 and sprint-only race pace all leave the tuner at qualifying weight 1.0 (LORO rank corr
+   0.860 either way). In 2026, qualifying pace already carries the race-pace information;
+   `long_run_level="team"` is kept as an option.
 4. **AI additions agreed with the user (2026-09-30):** LLM-judge evals (DeepEval/Ragas:
    faithfulness + retrieval precision, Qwen on Groq as judge) and probability calibration of the
    pre-race model (isotonic / temperature scaling) first; then a regulations reranker, Bayesian

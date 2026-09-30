@@ -252,7 +252,17 @@ def season_form(con, year: int, before, max_abs: float = 1.5) -> dict[str, tuple
     return {team: (statistics.mean(v), len(v)) for team, v in samples.items()}
 
 
-def build_inputs(con, year: int, place: str, laps: int | None = None) -> WeekendInputs:
+def build_inputs(
+    con,
+    year: int,
+    place: str,
+    laps: int | None = None,
+    long_run_level: str = "driver",
+    sprint_weight: float = SPRINT_WEIGHT,
+) -> WeekendInputs:
+    """`long_run_level`: "driver" (each driver's own long runs) or "team" (both cars' average,
+    less sensitive to one driver's fuel load / programme). `sprint_weight`: how much a sprint's
+    race pace counts relative to a practice long run."""
     meeting_key, sessions = weekend_sessions(con, year, place)
     race_sk = sessions.get("Race")
     quali_sk = sessions.get("Qualifying")
@@ -262,7 +272,7 @@ def build_inputs(con, year: int, place: str, laps: int | None = None) -> Weekend
         sessions[s]: 1.0 for s in ("Practice 1", "Practice 2", "Practice 3") if s in sessions
     }
     if "Sprint" in sessions:
-        pace_sessions[sessions["Sprint"]] = SPRINT_WEIGHT
+        pace_sessions[sessions["Sprint"]] = sprint_weight
     laps_by_session = {sk: _clean_laps(con, sk) for sk in pace_sessions}
 
     # Degradation from this weekend's running (practice + sprint), per compound.
@@ -280,6 +290,15 @@ def build_inputs(con, year: int, place: str, laps: int | None = None) -> Weekend
     quali = _quali_deltas(con, quali_sk)
     long_run = _long_run_deltas(pace_sessions, laps_by_session, deg)
     names = _drivers(con, [sk for sk in sessions.values()])
+    if long_run_level == "team":
+        by_team: dict[str, list[float]] = {}
+        for n, delta in long_run.items():
+            by_team.setdefault(names.get(n, ("", ""))[1], []).append(delta)
+        long_run = {
+            n: statistics.mean(by_team[names.get(n, ("", ""))[1]])
+            for n in long_run
+            if names.get(n, ("", ""))[1]
+        }
     weekend_start = con.execute(
         "SELECT min(date_start) FROM races WHERE meeting_key = ?", [meeting_key]
     ).fetchone()[0]
