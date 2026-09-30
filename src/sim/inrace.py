@@ -20,6 +20,7 @@ import numpy as np
 
 from src.livetiming.monitor import LapRecord, RaceMonitor
 from src.livetiming.snapshot import RaceSnapshot
+from src.models.compounds import c_number
 from src.models.tyres import CleanLap, fit_tyre_model
 from src.sim.race import SimParams, traffic_step
 
@@ -42,6 +43,7 @@ class CarState:
     stops: int
     owes_compound: bool
     pace_s: float  # recent race pace vs the field median (s/lap, lower = faster)
+    compound_c: str | None = None  # Pirelli compound for this weekend, e.g. "C4"
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,7 @@ def race_state(
                 stops=d.pit_stops,
                 owes_compound=d.needs_second_compound,
                 pace_s=pace.get(d.number, field_median) - field_median,
+                compound_c=c_number(snapshot.year or 0, snapshot.location, d.compound),
             )
         )
     cars.sort(key=lambda c: c.position)
@@ -231,6 +234,7 @@ def simulate_from(
                 "p_win": round(float((positions[:, i] == 1).mean()), 3),
                 "p_podium": round(float((positions[:, i] <= 3).mean()), 3),
                 "compound": c.compound,
+                "compound_c": c.compound_c,
                 "tyre_age": c.tyre_age,
                 "stopped": c.stops > 0,
                 "tyre_risk": risk,

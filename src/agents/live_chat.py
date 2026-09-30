@@ -28,6 +28,8 @@ Rules:
 - For "can X make it to the end?" use tyre_age, laps_remaining and tyre_note. Cars with
   stopped=false and old tyres are the ones that stayed out; if every car has fresh tyres, say
   that nobody stayed out rather than describing stay-outs.
+- Tyres: HARD/MEDIUM/SOFT are this weekend's labels; compound_c is Pirelli's actual compound
+  (C1 hardest .. C5 softest). Mention it when comparing tyres.
 - Be direct and brief, like radio to the pit wall: verdict first, then 2-4 supporting points.
 
 RACE STATE (JSON):
@@ -54,6 +56,7 @@ def race_context(monitor: RaceMonitor, sims: int = 2000) -> dict[str, Any]:
                     "position",
                     "tla",
                     "compound",
+                    "compound_c",
                     "tyre_age",
                     "stopped",
                     "p_win",

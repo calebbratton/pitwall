@@ -1,0 +1,31 @@
+{
+  "_about": "Pirelli's per-race compound nominations for 2026 (range C1 hardest .. C5 softest). The timing feeds only say HARD/MEDIUM/SOFT; this maps them to the actual compound. Keys are the race `location` as in OpenF1/the warehouse. Sources are Pirelli press releases (press.pirelli.com) and F1/team previews quoting them; only entries tied to 2026 are recorded.",
+  "sources": [
+    "https://press.pirelli.com/complete-f1-tyre-range-for-the-first-three-grands-prix-of-2026/",
+    "https://press.pirelli.com/the-softest-trio-for-the-challenges-of-miami-and-montreal/",
+    "https://press.pirelli.com/the-tyre-compound-selections-for-monte-carlo-and-barcelona/",
+    "https://press.pirelli.com/the-full-pirelli-range-for-spielberg-and-silverstone",
+    "https://press.pirelli.com/the-compounds-selected-for-belgium-and-hungary",
+    "https://press.pirelli.com/tyre-compounds-selected-for-zandvoort-monza-and-madrid/",
+    "https://press.pirelli.com/tyre-compound-selections-for-baku-sepang-and-singapore/"
+  ],
+  "races": {
+    "Melbourne":         {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"},
+    "Shanghai":          {"HARD": "C2", "MEDIUM": "C3", "SOFT": "C4"},
+    "Suzuka":            {"HARD": "C1", "MEDIUM": "C2", "SOFT": "C3"},
+    "Miami Gardens":     {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"},
+    "Montréal":          {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"},
+    "Monte Carlo":       {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"},
+    "Barcelona":         {"HARD": "C2", "MEDIUM": "C3", "SOFT": "C4"},
+    "Spielberg":         {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"},
+    "Silverstone":       {"HARD": "C1", "MEDIUM": "C2", "SOFT": "C3"},
+    "Spa-Francorchamps": {"HARD": "C2", "MEDIUM": "C3", "SOFT": "C4"},
+    "Budapest":          {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"},
+    "Zandvoort":         {"HARD": "C2", "MEDIUM": "C3", "SOFT": "C4"},
+    "Monza":             {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"},
+    "Madrid":            {"HARD": "C2", "MEDIUM": "C3", "SOFT": "C4"},
+    "Baku":              {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"},
+    "Kuala Lumpur":      {"HARD": "C2", "MEDIUM": "C3", "SOFT": "C4"},
+    "Marina Bay":        {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"}
+  }
+}

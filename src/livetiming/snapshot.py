@@ -58,6 +58,8 @@ class RaceSnapshot:
     total_laps: int | None
     drivers: tuple[DriverState, ...]  # running order, retired cars last
     pit_lane_times_s: tuple[float, ...] = field(default=())
+    location: str = ""  # e.g. "Baku" (matches OpenF1 / the Pirelli nominations table)
+    year: int | None = None
 
     @property
     def laps_remaining(self) -> int | None:
@@ -148,4 +150,6 @@ def build_snapshot(state: TimingState) -> RaceSnapshot:
         total_laps=_int(laps.get("TotalLaps")),
         drivers=tuple(drivers),
         pit_lane_times_s=tuple(p.duration_s for p in state.pit_lane_times),
+        location=info.get("Meeting", {}).get("Location", ""),
+        year=_int(str(info.get("StartDate", ""))[:4]),
     )
