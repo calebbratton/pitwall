@@ -139,7 +139,16 @@ class SessionRegistry:
         session.monitor._radio_base = None  # set from SessionInfo once known (see _run_live)
         # Resolved at call time (not as a default argument) so tests can substitute a fake.
         client = (client_factory or LiveTimingClient)()
-        session.task = asyncio.create_task(_run_live(session, client, recorder, pump_kwargs))
+
+        def next_session() -> None:
+            # F1 moved on to a new session (FP1 -> FP2 -> ... on one connection): start clean
+            # (new monitor, recording and subscription, so the feed sends the full new state).
+            if self.current_live is session:
+                self.start_live(client_factory, record, **pump_kwargs)
+
+        session.task = asyncio.create_task(
+            _run_live(session, client, recorder, pump_kwargs, on_new_session=next_session)
+        )
         self.current_live = session
         return session
 
@@ -157,11 +166,27 @@ class SessionRegistry:
                 del self._sessions[live_id]
 
 
+class _NewSession(Exception):
+    """The feed switched to another session (a different SessionInfo Key)."""
+
+
 async def _run_live(
-    session: LiveSession, client: LiveTimingClient, recorder: Recorder | None, pump_kwargs: dict
+    session: LiveSession,
+    client: LiveTimingClient,
+    recorder: Recorder | None,
+    pump_kwargs: dict,
+    on_new_session: Callable[[], None] | None = None,
 ) -> None:
+    session_key = None
+
     async def source():
+        nonlocal session_key
         async for message in client.messages():
+            if message.topic == "SessionInfo" and message.data.get("Key") is not None:
+                key = message.data["Key"]
+                if session_key is not None and key != session_key:
+                    raise _NewSession(key)
+                session_key = key
             if recorder:
                 recorder.write(message)
             if message.topic == "SessionInfo" and not session.monitor._radio_base:
@@ -170,11 +195,15 @@ async def _run_live(
                     session.monitor._radio_base = f"https://livetiming.formula1.com/static/{path}"
             yield message, False
 
+    new_session = False
     try:
         async for event in pump(source(), session.monitor, load_circuit_live=True, **pump_kwargs):
             session.publish(event)
     except asyncio.CancelledError:
         raise
+    except _NewSession as e:
+        log.info("live feed moved to session %s: starting a new live session", e)
+        new_session = True
     except Exception:
         log.exception("live session %s failed", session.live_id)
     finally:
@@ -182,3 +211,6 @@ async def _run_live(
         session.publish({"type": "end"})
         if recorder:
             recorder.close()
+    if new_session and on_new_session:
+        # After this task has finished, so the registry sees it as no longer connected.
+        asyncio.get_running_loop().call_soon(on_new_session)

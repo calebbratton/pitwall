@@ -114,14 +114,22 @@ def grid_prediction_event(monitor) -> dict[str, Any] | None:
     snapshot = monitor.snapshot()
     if not (snapshot.year and snapshot.location and snapshot.total_laps):
         return None
+    # The feed's location name can differ from OpenF1's (e.g. a circuit vs a city name); the
+    # country name is the fallback.
+    meeting = monitor.state.topics.get("SessionInfo", {}).get("Meeting", {})
+    country = (meeting.get("Country") or {}).get("Name") or ""
     try:
-        if not ensure_weekend(snapshot.year, snapshot.location):
+        place = next(
+            (p for p in (snapshot.location, country) if p and ensure_weekend(snapshot.year, p)),
+            None,
+        )
+        if place is None:
             log.warning("no qualifying data for %s %s", snapshot.location, snapshot.year)
             return None
         # No automatic rain mixing: the wet setting showed no out-of-sample gain (src/sim/wet.py).
         # The forecast is shown on its own (weather bar).
         prediction = grid_prediction(
-            snapshot.year, snapshot.location, snapshot.total_laps, grid=monitor.starting_grid()
+            snapshot.year, place, snapshot.total_laps, grid=monitor.starting_grid()
         )
     except Exception:
         log.exception("pre-race prediction failed")

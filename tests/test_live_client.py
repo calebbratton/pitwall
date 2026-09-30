@@ -143,3 +143,48 @@ def test_catch_up_snapshot_reflects_current_state_not_last_published():
     events = {e["type"]: e for e in session.catch_up()}
     assert events["snapshot"]["lap"] == 7 and len(events["snapshot"]["drivers"]) == 2
     assert events["track_status"]["status"] == "SAFETY_CAR"
+
+
+def test_new_session_on_the_feed_starts_a_fresh_live_session(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    from src.livetiming.archive import Message
+    from src.livetiming.session import SessionRegistry
+
+    folders = iter([tmp_path / "rec1", tmp_path / "rec2"])
+    monkeypatch.setattr("src.livetiming.session.recording_folder", lambda: next(folders))
+
+    def msg(t, topic, data):
+        return Message(timedelta(seconds=t), topic, data)
+
+    fp1 = {"Key": 1, "Name": "Practice 1", "Type": "Practice", "Meeting": {"Name": "Test GP"}}
+    fp2 = {"Key": 2, "Name": "Practice 2", "Type": "Practice", "Meeting": {"Name": "Test GP"}}
+    feeds = iter(
+        [
+            [
+                msg(0, "SessionInfo", fp1),
+                msg(1, "DriverList", {"4": {"Tla": "NOR"}}),
+                msg(2, "TimingData", {"Lines": {"4": {"Position": "1"}}}),
+                msg(3, "SessionInfo", fp2),  # F1 moves on to FP2 on the same connection
+            ],
+            [msg(0, "SessionInfo", fp2), msg(1, "DriverList", {"1": {"Tla": "VER"}})],
+        ]
+    )
+
+    async def run():
+        registry = SessionRegistry()
+        first = registry.start_live(client_factory=lambda: FakeLiveClient(next(feeds)))
+        await first.task
+        for _ in range(20):  # let the scheduled restart run
+            await asyncio.sleep(0)
+            if registry.current_live is not first and registry.current_live.task.done():
+                break
+        second = registry.current_live
+        await second.task
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert second is not first and first.finished
+    assert second.monitor.snapshot().session == "Practice 2"
+    assert "4" not in second.monitor.state.topics.get("DriverList", {})  # nothing from FP1
+    assert second.recording.endswith("rec2")

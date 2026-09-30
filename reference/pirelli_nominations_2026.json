@@ -9,6 +9,7 @@
     "https://press.pirelli.com/tyre-compounds-selected-for-zandvoort-monza-and-madrid/",
     "https://press.pirelli.com/tyre-compound-selections-for-baku-sepang-and-singapore/"
   ],
+  "aliases": {"Sepang": "Kuala Lumpur", "Monaco": "Monte Carlo", "Miami": "Miami Gardens", "Singapore": "Marina Bay"},
   "races": {
     "Melbourne":         {"HARD": "C3", "MEDIUM": "C4", "SOFT": "C5"},
     "Shanghai":          {"HARD": "C2", "MEDIUM": "C3", "SOFT": "C4"},
