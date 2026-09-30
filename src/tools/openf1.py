@@ -7,6 +7,7 @@ with a disk cache; `MockOpenF1Client` serves recorded fixtures so tests never to
 
 import hashlib
 import json
+import re
 import time
 import unicodedata
 from abc import ABC, abstractmethod
@@ -58,11 +59,21 @@ class OpenF1Client(ABC):
         rows = self._fetch("sessions", {"year": year, "session_name": session_name})
         sessions = [Session.model_validate(r) for r in rows]
         needle = _normalize(place)
-        matches = [
-            s
+        names = {
+            s.session_key: [
+                _normalize(n) for n in (s.country_name, s.location, s.circuit_short_name)
+            ]
             for s in sessions
-            if needle in {_normalize(n) for n in (s.country_name, s.location, s.circuit_short_name)}
-        ]
+        }
+        matches = [s for s in sessions if needle in names[s.session_key]]
+        # Short forms: a whole word first ("Spa" -> Spa-Francorchamps, not Spain), then a prefix.
+        for short in (
+            lambda n: needle in re.split(r"[^a-z0-9]+", n),
+            lambda n: n.startswith(needle),
+        ):
+            if matches or not needle:
+                break
+            matches = [s for s in sessions if any(short(n) for n in names[s.session_key])]
         if len(matches) == 1:
             return matches[0]
         if matches:

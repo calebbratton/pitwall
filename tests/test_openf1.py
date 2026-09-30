@@ -140,3 +140,10 @@ def test_http_server_error_raises():
     c = _http_client(lambda request: httpx.Response(500))
     with pytest.raises(OpenF1Error):
         c.get_drivers(SESSION_KEY)
+
+
+def test_get_session_accepts_short_names(client):
+    assert client.get_session(2024, "Spa").location == "Spa-Francorchamps"
+    assert client.get_session(2024, "Yas").location == "Yas Island"
+    with pytest.raises(OpenF1Error, match="several"):
+        client.get_session(2024, "Mon")  # Monaco, Montréal, Monza
