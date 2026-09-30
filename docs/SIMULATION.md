@@ -31,8 +31,21 @@ Report distributions ("P4 or better: 70%"), not just point estimates.
 | Overtaking model: P(pass \| pace delta) | 2026 races per circuit (position changes vs pace delta); fallback by circuit type | What makes Monaco ≠ Monza |
 | SC / VSC hazard per lap, duration | Per-circuit neutralisation history, **2024–2026** | Incident rates depend on the circuit more than on the car rules, so older seasons help here |
 
-Everything car-dependent comes from the current weekend (2026 regulations reset car behaviour);
-circuit-dependent quantities may use older seasons.
+### Parameter scopes (any season can be analysed)
+
+Models are fitted **per race weekend**; only priors depend on the regulation era.
+
+| Scope | Parameters |
+|---|---|
+| Weekend (fitted from that race + its practice) | tyre degradation, compound offsets, driver pace/consistency, lap effects |
+| Regulation era — `ground_effect` 2022–2025, `2026` 2026+ | priors for the above; overtaking model (DRS vs active aero); dirty-air penalty |
+| Circuit, all seasons | SC/VSC hazard; circuit tyre severity (as a prior, with measured transfer) |
+| Circuit × year | pit loss (MultiViewer) |
+| Race date | regulations issue in force (already implemented) |
+
+Two analysis modes for past races: **hindsight** (fit on the whole race — fine for post-race
+review) and **as-it-happened** (only data up to lap L, via the replay cut-off) — the fair way to
+judge a strategy call.
 
 ## 3. One simulated lap (all simulations at once, numpy arrays shaped [sims, cars])
 
