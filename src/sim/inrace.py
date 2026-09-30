@@ -112,6 +112,7 @@ def race_state(
     life: dict[str, int] | None = None,
     pit_loss: tuple[float, float] = (22.0, 13.5),
     curves: dict | None = None,
+    compound_offsets: bool = False,
 ) -> RaceState:
     """`curves`: season tyre-age curves by C-number (src/models/tyre_curves.py). When given,
     each car's tyre life is how far its compound is proven to go without dropping off in the
@@ -144,6 +145,11 @@ def race_state(
     if offset:  # the reference compound has no offset of its own
         for compound in fitted:
             offset.setdefault(compound, 0.0)
+    if not compound_offsets:
+        # Off for live predictions: this fit leaves fuel burn in, which exaggerates compound gaps
+        # (softs 1.8 s faster at Baku 2026); with them the in-race backtest got worse (winner
+        # log-loss 1.29 -> 1.61, 57 checkpoints). The pit review supplies fuel-corrected ones.
+        offset = {}
     defaulted = [c for c in DEFAULT_DEG if c not in fitted or fitted[c].n_stints < 3]
     if curves and snapshot.year:
         from src.models.tyre_curves import late_slope
