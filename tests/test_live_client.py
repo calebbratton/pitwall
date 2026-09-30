@@ -128,3 +128,18 @@ def test_live_session_broadcasts_and_late_subscribers_catch_up(tmp_path, monkeyp
     assert {"session", "track_status", "snapshot", "pit_calls"} <= set(kinds)
     assert kinds[-1] == "end" and session.finished is not None
     assert (tmp_path / "rec" / "TimingData.jsonStream").exists()
+
+
+def test_catch_up_snapshot_reflects_current_state_not_last_published():
+    """The feed's initial state arrives in one burst inside the snapshot throttle, so the last
+    published snapshot can be empty; a new subscriber must still get the real current state."""
+    from tests.test_api import _race_with_laps
+
+    registry = SessionRegistry()
+    session = registry.create("live", "test")
+    session.publish({"type": "snapshot", "lap": None, "drivers": []})  # stale, empty
+    for m in _race_with_laps():
+        session.monitor.feed(m)
+    events = {e["type"]: e for e in session.catch_up()}
+    assert events["snapshot"]["lap"] == 7 and len(events["snapshot"]["drivers"]) == 2
+    assert events["track_status"]["status"] == "SAFETY_CAR"

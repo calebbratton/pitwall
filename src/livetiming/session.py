@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.livetiming.client import LiveTimingClient, Recorder, recording_folder
-from src.livetiming.monitor import RaceMonitor, pump
+from src.livetiming.monitor import RaceMonitor, pump, snapshot_event
 
 log = logging.getLogger(__name__)
 SESSION_TTL_S = 6 * 3600  # keep finished sessions around for post-race questions
@@ -63,8 +63,20 @@ class LiveSession:
                 self._subscribers.discard(queue)
 
     def catch_up(self) -> list[dict[str, Any]]:
-        order = ("session", "track", "track_status", "snapshot", "positions")
-        events = [self._latest[k] for k in order if k in self._latest]
+        """Current state for a new subscriber. Snapshot, track status and positions are built
+        fresh from the monitor: the last *published* snapshot can predate the state (the feed's
+        initial state arrives in one burst inside the snapshot throttle, and between sessions
+        nothing new is published)."""
+        events = [self._latest[k] for k in ("session", "track") if k in self._latest]
+        snap = self.monitor.snapshot()
+        if snap.track_status != "UNKNOWN":
+            events.append(
+                {"type": "track_status", "status": snap.track_status, "lap": snap.current_lap}
+            )
+        if snap.drivers:
+            events.append(snapshot_event(snap))
+        if positions := self.monitor.positions_event():
+            events.append(positions)
         for kind in ("race_control", "radio", "radio_transcript", "pit_calls", "prediction"):
             events.extend(self._recent[kind])
         return events
