@@ -12,6 +12,7 @@ POST /api/chat {"thread_id": str | null, "message": str} -> text/event-stream:
 import json
 import logging
 import os
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
@@ -24,11 +25,14 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
 from src.agents.graph import build_graph, memory_checkpointer
+from src.agents.live_chat import answer, prediction_event
 from src.livetiming.archive import ArchiveSession, list_sessions
 from src.livetiming.monitor import replay
+from src.livetiming.session import SessionRegistry
 from src.llm.transcribe import RadioTranscriber
 from src.rag.index import RegulationIndex
 from src.seasons import out_of_scope_message, supported_seasons
+from src.sim.inrace import NotEnoughData
 from src.tools.openf1 import HttpOpenF1Client
 
 log = logging.getLogger(__name__)
@@ -97,6 +101,7 @@ def _default_transcriber() -> RadioTranscriber | None:
 def create_app(
     make_graph: Callable[[], tuple[Any, Callable[[], None]]] = _default_graph,
     make_transcriber: Callable[[], Any] = _default_transcriber,
+    chat_model: Any = None,
 ) -> FastAPI:
     """make_graph returns (compiled graph, cleanup). Tests inject a graph with fake models and
     no transcriber."""
@@ -105,6 +110,8 @@ def create_app(
     async def lifespan(app: FastAPI):
         app.state.graph, cleanup = make_graph()
         app.state.transcriber = make_transcriber()
+        app.state.sessions = SessionRegistry()
+        app.state.chat_model = chat_model  # None -> the analyst model from the factory
         yield
         cleanup()
         if app.state.transcriber:
@@ -119,6 +126,7 @@ def create_app(
     app.get("/api/seasons")(seasons)
     app.get("/api/live/sessions")(live_sessions)
     app.get("/api/live/replay")(live_replay)
+    app.post("/api/live/ask")(live_ask)
     return app
 
 
@@ -178,20 +186,47 @@ def live_replay(
     monitor's event types: session, snapshot, track_status, race_control, radio,
     radio_transcript, pit_calls, end."""
     transcriber = request.app.state.transcriber if transcribe else None
+    session = request.app.state.sessions.create("replay", path)
 
     async def events() -> AsyncIterator[str]:
+        yield _sse("live", {"type": "live", "live_id": session.live_id, "source": "replay"})
         try:
             async for event in replay(
-                ArchiveSession(path), speed=speed, from_lap=from_lap, transcriber=transcriber
+                ArchiveSession(path),
+                speed=speed,
+                from_lap=from_lap,
+                transcriber=transcriber,
+                monitor=session.monitor,
+                on_neutralisation=prediction_event,
             ):
                 yield _sse(event["type"], event)
         except Exception as e:
             log.exception("replay failed")
             yield _sse("error", {"message": f"{type(e).__name__}: {e}"})
+        finally:
+            # Replays feed the session only while their stream is open (they're a test source);
+            # the race state stays queryable afterwards. The live feed will run as a server task.
+            session.finished = time.time()
 
     return StreamingResponse(
         events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
     )
+
+
+class AskRequest(BaseModel):
+    live_id: str
+    message: str = Field(min_length=1, max_length=1000)
+
+
+def live_ask(req: AskRequest, request: Request) -> dict[str, Any]:
+    """Answer a question about a live session's race as it stands right now."""
+    session = request.app.state.sessions.get(req.live_id)
+    if session is None:
+        raise HTTPException(404, "That live session isn't running any more.")
+    try:
+        return answer(session.monitor, req.message, model=request.app.state.chat_model)
+    except NotEnoughData as e:
+        raise HTTPException(409, f"Not enough race data yet: {e}") from e
 
 
 app = create_app()

@@ -10,6 +10,7 @@ Events (dicts with a "type"):
   radio         {driver, tla, url, utc, text}                        each new team radio clip
   radio_transcript {url, tla, text}                                   when a clip's text is ready
   pit_calls     {report}                                             when a SC / VSC starts
+  (+ whatever `on_neutralisation` returns, e.g. a `prediction` event: who wins from here)
   snapshot      {lap, total_laps, status, clock, drivers:[...]}      throttled by the driver
   track         {source, points, bounds, rotation?, corners?, marshal_sectors?}  once, first
   positions     {utc, cars: [{number, tla, x, y, status}]}           ~4/s wall clock (replay)
@@ -17,7 +18,7 @@ Events (dicts with a "type"):
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import timedelta
 from typing import Any, Protocol
 
@@ -60,6 +61,31 @@ def snapshot_event(snap: RaceSnapshot) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class LapRecord:
+    """One completed lap of one car, as seen live."""
+
+    lap: int
+    time_s: float | None
+    compound: str | None
+    tyre_age: int | None  # laps on the set at the end of this lap
+    stint: int
+    pit_in: bool
+    pit_out: bool
+    neutralised: bool  # an SC / VSC / red flag was out at some point during the lap
+
+
+def _lap_seconds(value: str | None) -> float | None:
+    """ "1:48.619" -> 108.619."""
+    if not value:
+        return None
+    try:
+        minutes, _, seconds = value.rpartition(":")
+        return (int(minutes) * 60 if minutes else 0) + float(seconds)
+    except ValueError:
+        return None
+
+
 class RaceMonitor:
     def __init__(self, radio_base_url: str | None = None, pit_loss: PitLoss | None = None) -> None:
         self.state = TimingState()
@@ -70,6 +96,10 @@ class RaceMonitor:
         self._race_control_seen = 0
         self._radio_seen: set[str] = set()
         self._positions: tuple[str, dict] | None = None
+        # Lap history (for in-race pace, degradation and tyre life): per car number.
+        self.laps: dict[str, list[LapRecord]] = {}
+        self._neutralised_since_lap: dict[str, bool] = {}
+        self._in_pit_this_lap: dict[str, bool] = {}
 
     def positions_event(self) -> dict[str, Any] | None:
         """Newest car coordinates, or None before the first Position.z message."""
@@ -101,6 +131,16 @@ class RaceMonitor:
         self.state.apply(message.topic, message.data, str(message.offset))
         events: list[dict[str, Any]] = []
         topics = self.state.topics
+        if message.topic == "TrackStatus":
+            status = TRACK_STATUS.get(str(message.data.get("Status")), "UNKNOWN")
+            if status in ("SAFETY_CAR", "VSC", "VSC_ENDING", "RED_FLAG"):
+                for car in self._neutralised_since_lap:
+                    self._neutralised_since_lap[car] = True
+                self._neutralised_now = True
+            else:
+                self._neutralised_now = False
+        if message.topic == "TimingData":
+            self._record_laps(message.data)
 
         if not self._session_sent and "SessionInfo" in topics and "LapCount" in topics:
             snap = self.snapshot()
@@ -159,6 +199,35 @@ class RaceMonitor:
                 )
         return events
 
+    def _record_laps(self, update: dict) -> None:
+        lines = self.state.topics.get("TimingData", {}).get("Lines", {})
+        app = self.state.topics.get("TimingAppData", {}).get("Lines", {})
+        for car, change in (update.get("Lines") or {}).items():
+            if not isinstance(change, dict):
+                continue
+            line = lines.get(car, {})
+            if change.get("InPit") or change.get("PitOut"):
+                self._in_pit_this_lap[car] = True
+            if "NumberOfLaps" not in change:
+                continue
+            stints = [s for s in (app.get(car, {}).get("Stints") or []) if s.get("Compound")]
+            current = stints[-1] if stints else {}
+            pitted = self._in_pit_this_lap.pop(car, False)
+            self.laps.setdefault(car, []).append(
+                LapRecord(
+                    lap=int(change["NumberOfLaps"]),
+                    time_s=_lap_seconds((line.get("LastLapTime") or {}).get("Value")),
+                    compound=current.get("Compound"),
+                    tyre_age=current.get("TotalLaps"),
+                    stint=len(stints),
+                    pit_in=bool(line.get("InPit")) or pitted,
+                    pit_out=bool(line.get("PitOut")),
+                    neutralised=self._neutralised_since_lap.get(car, False)
+                    or getattr(self, "_neutralised_now", False),
+                )
+            )
+            self._neutralised_since_lap[car] = getattr(self, "_neutralised_now", False)
+
     def driver_names(self, number: str) -> list[str]:
         """The driver's full name, to prime speech recognition with the right spelling."""
         d = self.state.topics.get("DriverList", {}).get(number, {})
@@ -197,6 +266,8 @@ async def replay(
     transcript_wait_s: float = 30.0,
     positions_every_s: float = 0.25,
     circuit_loader: Callable[[list[Message]], Circuit | None] | None = None,
+    monitor: RaceMonitor | None = None,
+    on_neutralisation: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Play an archived session as if live. Messages before `from_lap` are applied instantly
     (their events are dropped, except `session`); afterwards the original timing is kept,
@@ -206,7 +277,11 @@ async def replay(
     With a `transcriber`, each `radio` event carries its cached text or null; uncached clips are
     transcribed in the background and delivered as `radio_transcript` events, so the race feed
     never waits on speech recognition."""
-    monitor = RaceMonitor(radio_base_url=f"{STATIC}/{session.path}")
+    # A caller-owned monitor lets a live session answer questions about the race state while
+    # this generator feeds it (the replay is just a test source for the live tooling).
+    if monitor is None:
+        monitor = RaceMonitor()
+    monitor._radio_base = f"{STATIC}/{session.path}"
     load_circuit = circuit_loader or _circuit_for
     fast_forward = from_lap is not None
     previous: timedelta | None = None
@@ -267,6 +342,10 @@ async def replay(
             for event in events:
                 start_transcription(event)
                 yield event
+                if event["type"] == "pit_calls" and on_neutralisation and not fast_forward:
+                    extra = await asyncio.to_thread(on_neutralisation, monitor)
+                    if extra:
+                        yield extra
             for event in drain():
                 yield event
 

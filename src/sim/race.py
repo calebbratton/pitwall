@@ -76,6 +76,33 @@ class Prediction:
         ]
 
 
+def traffic_step(
+    new_T: np.ndarray,
+    lap_time: np.ndarray,
+    order: np.ndarray,
+    running: np.ndarray,
+    racing: np.ndarray,
+    p: SimParams,
+    rng: np.random.Generator,
+) -> None:
+    """Front to back (in `order`, the running order before the lap): a car that would close
+    within min_gap of the car ahead passes with P(pace advantage), otherwise it's held behind
+    and pays dirty air. Updates `new_T` in place; `racing` masks simulations under SC/VSC."""
+    sims, n = new_T.shape
+    flat = np.arange(sims)
+    for k in range(1, n):
+        car = order[:, k]
+        ahead = order[:, k - 1]
+        t_car = new_T[flat, car]
+        t_ahead = new_T[flat, ahead]
+        ok = running[flat, car] & running[flat, ahead] & racing
+        close = ok & (t_car < t_ahead + p.min_gap)
+        advantage = lap_time[flat, ahead] - lap_time[flat, car]
+        p_pass = 1 / (1 + np.exp(-(advantage - p.pass_threshold) / p.pass_scale))
+        held = close & (rng.random(sims) >= p_pass)
+        new_T[flat, car] = np.where(held, t_ahead + p.min_gap + p.dirty_air, t_car)
+
+
 def race_pace(inputs: WeekendInputs, p: SimParams) -> np.ndarray:
     """Per-car race pace offset (s/lap, lower = faster), from qualifying and long runs."""
     paces = []
@@ -106,7 +133,6 @@ def simulate(
     grid = np.array([d.grid for d in inputs.drivers], dtype=float)
     deg = float(np.mean(list(inputs.deg.values())))
     rows = np.arange(sims)[:, None]
-    flat = rows[:, 0]
 
     # Start: grid spacing plus a lap-1 shuffle.
     T = (grid[None, :] - 1) * p.grid_spacing + rng.normal(0, p.start_noise, (sims, n))
@@ -171,19 +197,7 @@ def simulate(
             new_T = np.where(new_sc[:, None] & running, queued, new_T)
         racing = ~under_sc & ~under_vsc
         if racing.any():
-            # Traffic, front to back: a car that would close within min_gap of the car ahead
-            # passes with P(advantage), else it's held behind and pays dirty air.
-            for k in range(1, n):
-                car = order[:, k]
-                ahead = order[:, k - 1]
-                t_car = new_T[flat, car]
-                t_ahead = new_T[flat, ahead]
-                ok = running[flat, car] & running[flat, ahead] & racing
-                close = ok & (t_car < t_ahead + p.min_gap)
-                advantage = lap_time[flat, ahead] - lap_time[flat, car]
-                p_pass = 1 / (1 + np.exp(-(advantage - p.pass_threshold) / p.pass_scale))
-                held = close & (rng.random(sims) >= p_pass)
-                new_T[flat, car] = np.where(held, t_ahead + p.min_gap + p.dirty_air, t_car)
+            traffic_step(new_T, lap_time, order, running, racing, p, rng)
         T = np.where(running, new_T, T)
         sc_left = np.maximum(sc_left - 1, 0)
         vsc_left = np.maximum(vsc_left - 1, 0)

@@ -134,3 +134,95 @@ def test_seasons_endpoint_and_out_of_window_sessions():
     with _client(Scripted([]), Scripted([]), Scripted([])) as client:
         assert client.get("/api/seasons").json() == supported_seasons()
         assert client.get("/api/live/sessions", params={"year": 2019}).status_code == 404
+
+
+def _race_with_laps(n_laps=6, sc_lap=5):
+    """Two cars lapping (RUS leads VER), with a safety car on `sc_lap`."""
+    from tests.test_monitor import _msg
+
+    msgs = [
+        _msg(0, "SessionInfo", {"Name": "Race", "Meeting": {"Name": "Test GP"}}),
+        _msg(0, "TrackStatus", {"Status": "1"}),
+        _msg(1, "DriverList", {"63": {"Tla": "RUS"}, "1": {"Tla": "VER"}}),
+        _msg(1, "LapCount", {"CurrentLap": 1, "TotalLaps": 20}),
+        _msg(
+            1,
+            "TimingAppData",
+            {
+                "Lines": {
+                    "63": {"Stints": [{"Compound": "MEDIUM", "New": "true", "TotalLaps": 0}]},
+                    "1": {"Stints": [{"Compound": "MEDIUM", "New": "true", "TotalLaps": 0}]},
+                }
+            },
+        ),
+    ]
+    for lap in range(1, n_laps + 1):
+        t = lap * 90.0
+        if lap == sc_lap:
+            msgs.append(_msg(t - 30, "TrackStatus", {"Status": "4", "Message": "SCDeployed"}))
+        msgs += [
+            _msg(t, "LapCount", {"CurrentLap": lap + 1}),
+            _msg(
+                t,
+                "TimingAppData",
+                {
+                    "Lines": {
+                        "63": {"Stints": {"0": {"TotalLaps": lap}}},
+                        "1": {"Stints": {"0": {"TotalLaps": lap}}},
+                    }
+                },
+            ),
+            _msg(
+                t,
+                "TimingData",
+                {
+                    "Lines": {
+                        "63": {
+                            "Position": "1",
+                            "GapToLeader": "",
+                            "NumberOfLaps": lap,
+                            "LastLapTime": {"Value": "1:30.000"},
+                        },
+                        "1": {
+                            "Position": "2",
+                            "GapToLeader": "+2.000",
+                            "NumberOfLaps": lap,
+                            "LastLapTime": {"Value": "1:30.200"},
+                        },
+                    }
+                },
+            ),
+        ]
+    return msgs
+
+
+def test_live_session_prediction_event_and_ask(monkeypatch):
+    from tests.test_monitor import FakeSession
+
+    monkeypatch.setattr("src.api.ArchiveSession", lambda path: FakeSession(_race_with_laps()))
+    model = Scripted([AIMessage("RUS wins from here: 2 s clear on equal tyres.")])
+
+    def make_graph():
+        return None, lambda: None
+
+    app = create_app(make_graph, make_transcriber=lambda: None, chat_model=model)
+    with TestClient(app) as client:
+        events = _events(client.get("/api/live/replay", params={"path": "x/", "speed": 1000}).text)
+        kinds = [e for e, _ in events]
+        assert kinds[0] == "live" and events[0][1]["source"] == "replay"
+        live_id = events[0][1]["live_id"]
+        prediction = next(d for e, d in events if e == "prediction")
+        assert prediction["status"] == "SAFETY_CAR" and prediction["table"][0]["tla"] == "RUS"
+        assert kinds.index("prediction") > kinds.index("pit_calls")
+
+        resp = client.post("/api/live/ask", json={"live_id": live_id, "message": "Who wins?"})
+        body = resp.json()
+        assert resp.status_code == 200 and body["answer"].startswith("RUS wins")
+        assert body["prediction"]["table"][0]["tla"] == "RUS"
+        # The model was given the computed race state, not asked to guess.
+        assert '"laps_remaining"' in model.calls[0][0].content
+
+        assert (
+            client.post("/api/live/ask", json={"live_id": "nope", "message": "x"}).status_code
+            == 404
+        )
