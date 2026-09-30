@@ -77,6 +77,11 @@ data makes the simulation accurate, and the LLM explains results rather than jud
 ### 3. Tyre and lap-time model from the current weekend
 - Per-compound degradation (+ cliff) from practice long runs, updated live in the race; fuel
   correction; per-driver pace and consistency; all with uncertainty. Fitting runs on the warehouse.
+- **Historical priors, with measured transfer**: fit 2024–25 races with the same model and
+  measure how well a circuit's past degradation predicts 2026 at the same circuit. If it does,
+  use it as a prior with a fitted scale factor and spread (most valuable before FP2 at a
+  circuit, e.g. Kuala Lumpur/Singapore); the weekend's own data then updates it. Circuit
+  severity and tyre-curve shape should transfer; absolute rates and compound gaps won't.
 - Map SOFT/MEDIUM/HARD to Pirelli's C-compounds for the event.
 - First consumers: **undercut/overcut check** (two-car: fresh-tyre gain vs rival's old tyres,
   out-lap warm-up, gap, until rival responds) shown per close battle in the LIVE tab and
@@ -128,6 +133,10 @@ data makes the simulation accurate, and the LLM explains results rather than jud
   (crossover/intermediate calls); track-temperature effect on degradation.
 
 ### 8. Driving style (CarData.z)
+- Public telemetry shows how a car is driven (speed, throttle, brake, gear), not tyre state
+  (temperatures/pressures aren't public): telemetry→wear links are learned against the tyre
+  model's measured degradation; 2024–25 as a prior, re-checked on 2026 (energy management
+  changed throttle traces).
 - Braking, throttle, lift-and-coast, tyre-management signatures; feeds per-driver tyre model.
 
 ### 8b. Strategist controls
