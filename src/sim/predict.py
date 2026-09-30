@@ -9,11 +9,15 @@ Usage (after qualifying, once the sessions are in the warehouse):
 
 import argparse
 import json
+from datetime import datetime
 
 from src.sim.calibrate import DEFAULT_CALIBRATION, apply
 from src.sim.inputs import _grid, build_inputs, penalised_grid, weekend_sessions
 from src.sim.race import simulate
+from src.sim.wet import simulate_weather
+from src.tools.openf1 import HttpOpenF1Client
 from src.warehouse.queries import connect
+from src.weather.forecast import race_rain
 
 
 def main() -> None:
@@ -30,6 +34,10 @@ def main() -> None:
         help="grid-place penalties from the FIA documents, e.g. VER=10 HAM=5",
     )
     ap.add_argument("--pit-lane", nargs="*", default=[], metavar="TLA", help="pit-lane starters")
+    ap.add_argument("--rain", type=float, help="chance of a wet race, 0..1 (wet/dry mixture)")
+    ap.add_argument(
+        "--forecast", action="store_true", help="use the Open-Meteo rain forecast for the race"
+    )
     ap.add_argument("--raw", action="store_true", help="uncalibrated simulator probabilities")
     ap.add_argument("--json", action="store_true", help="print JSON instead of a table")
     args = ap.parse_args()
@@ -53,7 +61,16 @@ def main() -> None:
             {number[t.upper()] for t in args.pit_lane},
         )
     inputs = build_inputs(con, args.year, args.place, laps=args.laps, grid=grid)
-    prediction = simulate(inputs, sims=args.sims)
+    p_rain = args.rain
+    if args.forecast and p_rain is None:
+        race = HttpOpenF1Client().get_session(args.year, args.place, "Race")
+        outlook = race_rain(race.location, datetime.fromisoformat(race.date_start))
+        p_rain = outlook.p_rain
+    prediction = (
+        simulate_weather(inputs, p_rain, sims=args.sims)
+        if p_rain
+        else simulate(inputs, sims=args.sims)
+    )
     table = prediction.table()
     if not args.raw:
         table = apply(table, DEFAULT_CALIBRATION, args.sims)
@@ -67,6 +84,11 @@ def main() -> None:
         notes.append("grid = qualifying order (no penalties given: use --penalty / --pit-lane)")
     if args.laps:
         notes.append(f"race distance assumed: {args.laps} laps")
+    if p_rain:
+        notes.append(
+            f"{p_rain:.0%} chance of a wet race: that share of simulations use the wet setting "
+            "(smaller pace gaps, more randomness)"
+        )
     missing_pace = [d.tla for d in inputs.drivers if d.quali_delta_s is None]
     if missing_pace:
         notes.append(f"no qualifying lap for {', '.join(missing_pace)}: placed by grid slot")

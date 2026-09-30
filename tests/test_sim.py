@@ -137,3 +137,17 @@ def test_penalised_grid():
     assert g[1] == 11 and g[2] == 12  # same target: better qualifier first, the other next
     assert g[3] == 20 and g[4] == 1
     assert sorted(g.values()) == list(range(1, 21))
+
+
+def test_weather_mixture_uses_the_rain_share_and_opens_up_the_race():
+    from src.sim.wet import WET_PARAMS, simulate_weather
+
+    inputs = _weekend(n=10, gaps=0.3)
+    dry = simulate_weather(inputs, 0.0, sims=400, dry=BASE)
+    wet = simulate_weather(inputs, 1.0, sims=400, dry=BASE)
+    mixed = simulate_weather(inputs, 0.25, sims=400, dry=BASE)
+    assert dry.positions.shape == wet.positions.shape == mixed.positions.shape == (400, 10)
+    # smaller pace gaps and more noise: the favourite wins less often in the wet
+    assert WET_PARAMS.race_pace_scale < SimParams().race_pace_scale
+    assert wet.probability(1)[0] < dry.probability(1)[0]
+    assert wet.probability(1)[0] < mixed.probability(1)[0] < dry.probability(1)[0] + 0.05

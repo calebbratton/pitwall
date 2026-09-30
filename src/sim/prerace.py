@@ -10,9 +10,11 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+from src.livetiming.monitor import forecast_event
 from src.sim.calibrate import DEFAULT_CALIBRATION, apply
 from src.sim.inputs import build_inputs, weekend_sessions
 from src.sim.race import simulate
+from src.sim.wet import simulate_weather
 from src.warehouse.queries import connect
 
 log = logging.getLogger(__name__)
@@ -59,13 +61,17 @@ def grid_prediction(
     grid: dict[int, int] | None = None,
     sims: int = 5000,
     calibrated: bool = True,
+    p_rain: float | None = None,
 ) -> dict[str, Any]:
     con = connect()
     try:
         inputs = build_inputs(con, year, place, laps=laps, grid=grid)
     finally:
         con.close()
-    table = simulate(inputs, sims=sims).table()
+    prediction = (
+        simulate_weather(inputs, p_rain, sims=sims) if p_rain else simulate(inputs, sims=sims)
+    )
+    table = prediction.table()
     if calibrated:
         table = apply(table, DEFAULT_CALIBRATION, sims)
     slot = {d.tla: d.grid for d in inputs.drivers}
@@ -76,6 +82,8 @@ def grid_prediction(
         *inputs.notes,
         "every car finishes and no SC/VSC luck; probabilities calibrated on 2026 results",
     ]
+    if p_rain:
+        notes.append(f"{p_rain:.0%} chance of rain: that share of simulations run wet")
     return {
         "lap": 0,
         "laps_remaining": laps,
@@ -111,8 +119,13 @@ def grid_prediction_event(monitor) -> dict[str, Any] | None:
         if not ensure_weekend(snapshot.year, snapshot.location):
             log.warning("no qualifying data for %s %s", snapshot.location, snapshot.year)
             return None
+        forecast = forecast_event(monitor.state.topics.get("SessionInfo", {}))
         prediction = grid_prediction(
-            snapshot.year, snapshot.location, snapshot.total_laps, grid=monitor.starting_grid()
+            snapshot.year,
+            snapshot.location,
+            snapshot.total_laps,
+            grid=monitor.starting_grid(),
+            p_rain=forecast["p_rain"] if forecast else None,
         )
     except Exception:
         log.exception("pre-race prediction failed")
