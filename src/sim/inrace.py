@@ -44,6 +44,8 @@ class CarState:
     owes_compound: bool
     pace_s: float  # recent race pace vs the field median (s/lap, lower = faster)
     compound_c: str | None = None  # Pirelli compound for this weekend, e.g. "C4"
+    life_laps: int | None = None  # proven life for this compound (season curves), if known
+    life_source: str = ""  # how life_laps was derived, for the tyre note
 
 
 @dataclass(frozen=True)
@@ -94,7 +96,11 @@ def race_state(
     snapshot: RaceSnapshot,
     life: dict[str, int] | None = None,
     pit_loss: tuple[float, float] = (22.0, 13.5),
+    curves: dict | None = None,
 ) -> RaceState:
+    """`curves`: season tyre-age curves by C-number (src/models/tyre_curves.py). When given,
+    each car's tyre life is how far its compound is proven to go without dropping off in the
+    season's races, and they supply degradation for compounds with too little data so far."""
     if snapshot.current_lap is None or snapshot.total_laps is None:
         raise NotEnoughData("lap count not known yet")
     if snapshot.current_lap < MIN_LAPS_FOR_PREDICTION:
@@ -118,6 +124,17 @@ def race_state(
         if fit.n_stints >= 3:
             deg[compound] = min(max(fit.deg_s_per_lap, 0.0), 0.3)
     defaulted = [c for c in DEFAULT_DEG if c not in fitted or fitted[c].n_stints < 3]
+    if curves and snapshot.year:
+        from src.models.tyre_curves import late_slope
+
+        for label in list(defaulted):
+            curve = curves.get(c_number(snapshot.year, snapshot.location, label) or "")
+            slope = late_slope(curve) if curve else None
+            if slope is not None:
+                deg[label] = slope
+                defaulted.remove(label)
+        if not defaulted:
+            notes.append("degradation: this race where there's enough data, else season curves")
     if defaulted:
         notes.append(f"default degradation for {', '.join(defaulted)} (too few stints so far)")
 
@@ -149,7 +166,8 @@ def race_state(
                 stops=d.pit_stops,
                 owes_compound=d.needs_second_compound,
                 pace_s=pace.get(d.number, field_median) - field_median,
-                compound_c=c_number(snapshot.year or 0, snapshot.location, d.compound),
+                compound_c=(cn := c_number(snapshot.year or 0, snapshot.location, d.compound)),
+                **_life(cn, curves, snapshot.year),
             )
         )
     cars.sort(key=lambda c: c.position)
@@ -166,20 +184,34 @@ def race_state(
     )
 
 
+def _life(compound_c: str | None, curves: dict | None, year: int | None) -> dict:
+    curve = (curves or {}).get(compound_c or "")
+    if curve is None:
+        return {}
+    if curve.drop_off_age is not None:
+        source = f"{compound_c} drops off from ~{curve.drop_off_age} laps in {year} races"
+    else:
+        source = f"{compound_c} ran {curve.life_laps} laps in {year} races with no drop-off"
+    return {"life_laps": curve.life_laps, "life_source": source}
+
+
 def tyre_outlook(car: CarState, state: RaceState) -> tuple[str, str]:
     """(risk, note) for running to the flag on the current set."""
-    life = state.life.get(car.compound or "", 30)
+    life = car.life_laps or state.life.get(car.compound or "", 30)
     needed = car.tyre_age + state.laps_remaining
     if car.owes_compound:
         return "high", f"still owes the second compound: must stop ({car.tyre_age} laps on these)"
     if needed <= life:
-        return "low", f"{car.tyre_age} laps old; reaches the flag at {needed}, within a long stint"
+        proof = f" ({car.life_source})" if car.life_source else ", within a long stint"
+        return "low", f"{car.tyre_age} laps old; reaches the flag at {needed}{proof}"
     over = needed - life
     risk = "medium" if over <= 0.2 * life else "high"
-    return risk, (
-        f"{car.tyre_age} laps old; would reach {needed} laps at the flag, {over} past the "
-        f"longest typical 2026 {(car.compound or '').lower()} stint ({life})"
+    basis = (
+        f"beyond anything seen ({car.life_source})"
+        if car.life_source
+        else f"past the longest typical 2026 {(car.compound or '').lower()} stint ({life})"
     )
+    return risk, f"{car.tyre_age} laps old; would reach {needed} laps at the flag, {over} {basis}"
 
 
 def simulate_from(
@@ -196,7 +228,9 @@ def simulate_from(
     rows = np.arange(sims)[:, None]
     pace = np.array([car.pace_s for car in cars])[None, :]
     pace = pace + rng.normal(0, cal.pace_sigma, (sims, n)) if cal.pace_sigma else pace
-    life = np.array([state.life.get(c.compound or "", 30) for c in cars], dtype=float)[None, :]
+    life = np.array(
+        [c.life_laps or state.life.get(c.compound or "", 30) for c in cars], dtype=float
+    )[None, :]
     deg_now = np.array([state.deg.get(c.compound or "", 0.06) for c in cars])[None, :]
     age = np.tile(np.array([c.tyre_age for c in cars], dtype=float), (sims, 1))
 

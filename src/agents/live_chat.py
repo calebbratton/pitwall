@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from src.livetiming.monitor import RaceMonitor
 from src.livetiming.strategy import pit_calls
 from src.llm.factory import get_chat_model
+from src.models.tyre_curves import season_curves
 from src.sim.inrace import race_state, simulate_from
 
 PROMPT = """\
@@ -41,7 +42,8 @@ def race_context(monitor: RaceMonitor, sims: int = 2000) -> dict[str, Any]:
     snapshot = monitor.snapshot()
     pit_loss = monitor.pit_loss
     loss = (pit_loss.green, pit_loss.safety_car) if pit_loss else (22.0, 13.5)
-    state = race_state(monitor, snapshot, pit_loss=loss)
+    curves = season_curves(snapshot.year) if snapshot.year else {}
+    state = race_state(monitor, snapshot, pit_loss=loss, curves=curves)
     prediction = simulate_from(state, sims=sims)
     gaps = {d.tla: d.gap_to_leader_s for d in snapshot.drivers}
     context: dict[str, Any] = {
