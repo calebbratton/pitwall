@@ -56,6 +56,7 @@ def test_monitor_emits_session_status_race_control_and_pit_calls_on_safety_car()
         "type": "session",
         "meeting": "Test GP",
         "session": "Race",
+        "session_type": "",  # the test feed's SessionInfo has no Type; the name says Race
         "total_laps": 50,
     }
 
@@ -269,3 +270,59 @@ def test_lap_events_carry_the_lap_history():
             "overall_best": True,
         }
     ]
+
+
+def test_practice_and_qualifying_use_best_lap_timing_and_skip_race_calls():
+    lines = {
+        "1": {"Position": "1", "BestLapTime": {"Value": "1:45.387"}, "TimeDiffToFastest": ""},
+        "4": {
+            "Position": "2",
+            "BestLapTime": {"Value": "1:45.787"},
+            "TimeDiffToFastest": "+0.400",
+            "TimeDiffToPositionAhead": "+0.400",
+        },
+    }
+    monitor = RaceMonitor()
+    events = []
+    for m in [
+        _msg(
+            0,
+            "SessionInfo",
+            {"Name": "Practice 1", "Type": "Practice", "Meeting": {"Name": "Test GP"}},
+        ),
+        _msg(1, "DriverList", {"4": {"Tla": "NOR"}, "1": {"Tla": "VER"}}),
+        _msg(1, "TimingData", {"Lines": lines}),
+        _msg(2, "TrackStatus", {"Status": "6"}),  # a VSC test in practice
+    ]:
+        events += monitor.feed(m)
+    assert next(e for e in events if e["type"] == "session")["session_type"] == "Practice"
+    assert not [e for e in events if e["type"] == "pit_calls"]
+    snap = monitor.snapshot()
+    assert not snap.is_race
+    nor = snap.driver("NOR")
+    assert (nor.gap_to_leader_s, nor.interval_s, nor.best_lap_s) == (0.4, 0.4, 105.787)
+    assert monitor.snapshot_event()["rejoin"] == {}
+
+    quali = RaceMonitor()
+    q_line = {
+        "Position": "2",
+        "Stats": [
+            {"TimeDiffToFastest": "+0.3"},
+            {"TimeDiffToFastest": "+0.2"},
+            {"TimeDiffToFastest": "+0.9"},
+        ],
+        "BestLapTimes": [{"Value": "1:44.0"}, {"Value": "1:43.7"}, {"Value": "1:44.1"}],
+        "KnockedOut": False,
+    }
+    for m in [
+        _msg(
+            0,
+            "SessionInfo",
+            {"Name": "Qualifying", "Type": "Qualifying", "Meeting": {"Name": "Test GP"}},
+        ),
+        _msg(1, "DriverList", {"4": {"Tla": "NOR"}}),
+        _msg(1, "TimingData", {"SessionPart": 2, "Lines": {"4": q_line}}),
+    ]:
+        quali.feed(m)
+    nor = quali.snapshot().driver("NOR")
+    assert (nor.gap_to_leader_s, nor.best_lap_s) == (0.2, 103.7)  # the Q2 numbers

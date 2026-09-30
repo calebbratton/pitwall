@@ -57,6 +57,8 @@ def snapshot_event(
                 "team": d.team,
                 "team_colour": d.team_colour,
                 "gap": d.gap_to_leader_s,
+                "best_lap": d.best_lap_s,
+                "knocked_out": d.knocked_out,
                 "laps_down": d.laps_down,
                 "interval": d.interval_s,
                 "compound": d.compound,
@@ -67,9 +69,11 @@ def snapshot_event(
             }
             for d in snap.drivers
         ],
+        "session_type": snap.session_type,
         "pit_loss": losses(pit_loss),
         "lap_time_s": lap_time_s,
-        "rejoin": rejoin_table(snap, pit_loss),
+        # Rejoin projections only in races (practice / qualifying gaps are lap-time deltas).
+        "rejoin": rejoin_table(snap, pit_loss) if snap.is_race else {},
     }
 
 
@@ -235,13 +239,21 @@ class RaceMonitor:
         if message.topic == "TimingData":
             events.extend(self._record_laps(message.data))
 
-        if not self._session_sent and "SessionInfo" in topics and "LapCount" in topics:
+        # Races wait for LapCount (the header carries the race distance); practice and
+        # qualifying never publish it.
+        info_type = topics.get("SessionInfo", {}).get("Type")
+        if (
+            not self._session_sent
+            and "SessionInfo" in topics
+            and ("LapCount" in topics or (info_type and info_type != "Race"))
+        ):
             snap = self.snapshot()
             events.append(
                 {
                     "type": "session",
                     "meeting": snap.meeting,
                     "session": snap.session,
+                    "session_type": snap.session_type,
                     "total_laps": snap.total_laps,
                 }
             )
@@ -252,7 +264,8 @@ class RaceMonitor:
             if status != self._status:
                 snap = self.snapshot()
                 events.append({"type": "track_status", "status": status, "lap": snap.current_lap})
-                if status in NEUTRALISED and self._status not in NEUTRALISED:
+                # Pit calls only mean something in a race (practice runs VSC tests).
+                if status in NEUTRALISED and self._status not in NEUTRALISED and snap.is_race:
                     report = pit_calls(snap, self.pit_loss)
                     events.append({"type": "pit_calls", "report": asdict(report)})
                 self._status = status

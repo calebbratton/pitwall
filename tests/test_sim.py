@@ -151,3 +151,17 @@ def test_weather_mixture_uses_the_rain_share_and_opens_up_the_race():
     assert WET_PARAMS.race_pace_scale < SimParams().race_pace_scale
     assert wet.probability(1)[0] < dry.probability(1)[0]
     assert wet.probability(1)[0] < mixed.probability(1)[0] < dry.probability(1)[0] + 0.05
+
+
+def test_calibrated_chances_stay_ordered():
+    from src.sim.calibrate import DEFAULT_CALIBRATION, apply
+
+    table = [
+        {"tla": "A", "expected": 1.0, "p_win": 1.0, "p_podium": 1.0, "p_points": 1.0},
+        *[
+            {"tla": f"C{i}", "expected": 2.0 + i, "p_win": 0.0, "p_podium": 0.1, "p_points": 0.5}
+            for i in range(19)
+        ],
+    ]
+    for row in apply(table, DEFAULT_CALIBRATION, sims=5000):
+        assert row["p_win"] <= row["p_podium"] <= row["p_points"]

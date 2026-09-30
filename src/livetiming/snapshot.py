@@ -39,6 +39,8 @@ class DriverState:
     tyre_new_when_fitted: bool | None
     tyre_age_laps: int | None
     compounds_used: tuple[str, ...]
+    best_lap_s: float | None = None  # practice / qualifying (current segment); races: fastest lap
+    knocked_out: bool = False  # qualifying
 
     @property
     def needs_second_compound(self) -> bool:
@@ -60,6 +62,13 @@ class RaceSnapshot:
     pit_lane_times_s: tuple[float, ...] = field(default=())
     location: str = ""  # e.g. "Baku" (matches OpenF1 / the Pirelli nominations table)
     year: int | None = None
+    session_type: str = ""  # SessionInfo Type: "Race" (incl. sprints) | "Qualifying" | "Practice"
+
+    @property
+    def is_race(self) -> bool:
+        """Race or sprint: gaps are to the leader on the road and strategy calls make sense.
+        Practice and qualifying are timed by best lap."""
+        return self.session_type == "Race" or self.session in ("Race", "Sprint")
 
     @property
     def laps_remaining(self) -> int | None:
@@ -99,6 +108,16 @@ def _int(value) -> int | None:
         return None
 
 
+def _lap_s(value: str | None) -> float | None:
+    """ "1:45.787" -> 105.787."""
+    text = (value or "").strip()
+    try:
+        minutes, _, seconds = text.rpartition(":")
+        return (int(minutes) * 60 if minutes else 0) + float(seconds) if text else None
+    except ValueError:
+        return None
+
+
 def build_snapshot(state: TimingState) -> RaceSnapshot:
     t = state.topics
     info = t.get("SessionInfo", {})
@@ -106,6 +125,9 @@ def build_snapshot(state: TimingState) -> RaceSnapshot:
     timing = t.get("TimingData", {}).get("Lines", {})
     app = t.get("TimingAppData", {}).get("Lines", {})
     laps = t.get("LapCount", {})
+    race = info.get("Type") == "Race" or info.get("Name") in ("Race", "Sprint")
+    # Qualifying: the segment running now (Q1..Q3) picks the per-segment stats.
+    part = _int(t.get("TimingData", {}).get("SessionPart"))
 
     drivers = []
     for number, line in timing.items():
@@ -113,10 +135,26 @@ def build_snapshot(state: TimingState) -> RaceSnapshot:
         stints = [s for s in (app.get(number, {}).get("Stints") or []) if s.get("Compound")]
         current = stints[-1] if stints else {}
         position = _int(line.get("Position"))
-        gap, laps_down = _gap(line.get("GapToLeader"))
+        best = _lap_s((line.get("BestLapTime") or {}).get("Value"))
+        if race:
+            gap, laps_down = _gap(line.get("GapToLeader"))
+            interval, _ = _gap((line.get("IntervalToPositionAhead") or {}).get("Value"))
+        else:
+            # Timed by best lap: gap to the fastest time, interval to the car ahead's time.
+            stats = line.get("Stats")
+            if part and isinstance(stats, list) and len(stats) >= part:
+                seg = stats[part - 1] or {}
+                gap, _ = _gap(seg.get("TimeDiffToFastest"))
+                interval, _ = _gap(seg.get("TimeDifftoPositionAhead"))
+                times = line.get("BestLapTimes")
+                if isinstance(times, list) and len(times) >= part:
+                    best = _lap_s((times[part - 1] or {}).get("Value")) or best
+            else:
+                gap, _ = _gap(line.get("TimeDiffToFastest"))
+                interval, _ = _gap(line.get("TimeDiffToPositionAhead"))
+            laps_down = 0
         if position == 1:
             gap, laps_down = 0.0, 0
-        interval, _ = _gap((line.get("IntervalToPositionAhead") or {}).get("Value"))
         drivers.append(
             DriverState(
                 number=number,
@@ -137,6 +175,8 @@ def build_snapshot(state: TimingState) -> RaceSnapshot:
                 ),
                 tyre_age_laps=_int(current.get("TotalLaps")),
                 compounds_used=tuple(dict.fromkeys(s["Compound"] for s in stints)),
+                best_lap_s=best,
+                knocked_out=bool(line.get("KnockedOut")),
             )
         )
     drivers.sort(key=lambda d: (d.retired, d.position or 99))
@@ -152,4 +192,5 @@ def build_snapshot(state: TimingState) -> RaceSnapshot:
         pit_lane_times_s=tuple(p.duration_s for p in state.pit_lane_times),
         location=info.get("Meeting", {}).get("Location", ""),
         year=_int(str(info.get("StartDate", ""))[:4]),
+        session_type=str(info.get("Type", "")),
     )

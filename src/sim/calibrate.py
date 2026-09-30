@@ -75,13 +75,17 @@ def scale(p: np.ndarray, horizon: str, temperature: float, sims: int) -> np.ndar
 
 
 def apply(table: list[dict], calib: Calibration, sims: int) -> list[dict]:
-    """Calibrated copy of a `Prediction.table()`."""
+    """Calibrated copy of a `Prediction.table()`. Horizons are scaled separately, so each car's
+    chances are then made consistent: P(win) <= P(podium) <= P(points)."""
     out = [dict(row) for row in table]
     for horizon in HORIZONS:
         key = f"p_{horizon}"
         scaled = scale([r[key] for r in out], horizon, getattr(calib, horizon), sims)
         for row, p in zip(out, scaled, strict=True):
             row[key] = round(float(p), 3)
+    for row in out:
+        row["p_podium"] = max(row["p_podium"], row["p_win"])
+        row["p_points"] = max(row["p_points"], row["p_podium"])
     return out
 
 

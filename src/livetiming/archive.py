@@ -89,7 +89,14 @@ class ArchiveSession:
         cached = self._cache / f"{topic}.jsonStream"
         if cached.exists():
             return cached.read_text()
-        text = _get_text(f"{STATIC}/{quote(self.path)}{topic}.jsonStream")
+        try:
+            text = _get_text(f"{STATIC}/{quote(self.path)}{topic}.jsonStream")
+        except httpx.HTTPStatusError as e:
+            # A topic the session never published (e.g. LapCount in practice / qualifying): the
+            # archive answers 403 or 404. Treat it as empty, like the live feed does.
+            if e.response.status_code not in (403, 404):
+                raise
+            text = ""
         cached.parent.mkdir(parents=True, exist_ok=True)
         cached.write_text(text)
         return text
