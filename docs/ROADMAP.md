@@ -30,39 +30,44 @@ degradation, driving style, race state — live and in post-race review.
 | Pirelli compound nominations (which C1–C6 are hard/medium/soft each event) | Pirelli / FIA event documents | Public (to verify format) | Not yet — matters: "SOFT" is a different compound per event |
 | FIA event documents | Stewards' decisions, penalties, event notes | Public PDFs (to verify) | Not yet |
 
-## Phases
+## Phases (simulate-first — see `docs/SIMULATION.md` for the engine design)
 
-### 1. Tyre model from the current weekend
-- Fit per-compound degradation (s/lap of tyre age) and fuel correction from green-flag laps:
-  first from **practice long runs** (FP1–FP3 of the same weekend), then updated live with the
-  race so far. Per-driver adjustments when enough laps exist.
+The core of the platform is a race simulator: strategy decisions compare simulated futures,
+data makes the simulation accurate, and the LLM explains results rather than judging strategy.
+
+### 1. Correctness fixes
+- Exclude SC/VSC/red-flag laps from all pace statistics (track-status timeline).
+- "Last race" resolution and the compact whole-field race summary (token-limit fix).
+
+### 2. Tyre and lap-time model from the current weekend
+- Lap extraction from the feed (practice, race; archive and live).
+- Per-compound degradation (+ cliff) from practice long runs, updated live in the race; fuel
+  correction; per-driver pace and consistency; all with uncertainty.
 - Map SOFT/MEDIUM/HARD to Pirelli's C-compounds for the event.
-- Replace the fixed "fresh ≤ 5 / old ≥ 15 laps" rules in `strategy.py` with the expected time
-  gain of fresh tyres over the remaining laps vs the measured pit loss.
-
-### 2. Weather
-- Live `WeatherData` (track/air temp, rain, wind) in snapshots and the UI.
-- Open-Meteo forecast for the race window: rain probability → crossover/intermediate calls.
-- Track-temperature effect on degradation (from the weekend's own laps).
 
 ### 3. Race simulator
-- Lap-by-lap projection per driver: tyre model + fuel + pit loss + traffic (dirty-air/overtaking
-  difficulty per circuit). Answers: optimal pit window, undercut/overcut value, one- vs two-stop,
-  "what if the SC comes out now?".
-- Monte Carlo over safety-car probability (from 2026 incident rates per circuit type).
+- Deterministic single run that reproduces a finished race from its real strategies (validation).
+- Traffic/overtaking model per circuit, dirty air, SC/VSC mechanics, rules.
 
-### 4. Driving style (CarData.z, archive + own-login live)
-- Per-driver: braking points, minimum corner speeds, throttle application, lift-and-coast,
-  tyre-management signatures; compare teammates and stints. Feeds the per-driver tyre model.
+### 4. Monte Carlo decisions
+- Options × ~1,000 simulations with common random numbers; expected points/position + risk.
+- Replaces the rule-of-thumb pit calls; powers "best strategy", counterfactual and "what if the
+  SC comes now?" questions in chat, and a pit-window chart in the UI.
 
-### 5. Benchmark & evals (runs throughout)
-- 2026 safety-car/VSC events (~30 so far, +1 weekend at a time via the recorder) scored on
-  outcomes (positions ±5 laps and at the finish), leave-one-race-out.
+### 5. Backtesting & evals (from phase 2 onwards)
+- Lap-time prediction error; simulator finish-order accuracy; 2026 SC/VSC decision backtests
+  scored on outcomes with calibration; leave-one-race-out.
 - The original 20 chat scenarios: faithfulness and retrieval precision (DeepEval).
 
-### 6. Live
-- SignalR client + recorder (every live session becomes a replayable fixture).
-- Token-gated positions/telemetry for local use only.
+### 6. Weather
+- Live `WeatherData`; Open-Meteo forecast → rain probability as a simulator input
+  (crossover/intermediate calls); track-temperature effect on degradation.
 
-### 7. Context sources
-- Pirelli nominations, FIA stewards' documents (penalties change strategy), Jolpica results.
+### 7. Driving style (CarData.z)
+- Braking, throttle, lift-and-coast, tyre-management signatures; feeds per-driver tyre model.
+
+### 8. Live
+- SignalR client + recorder; token-gated positions/telemetry for local use only.
+
+### 9. Context sources
+- Pirelli nominations, FIA stewards' documents, Jolpica results.

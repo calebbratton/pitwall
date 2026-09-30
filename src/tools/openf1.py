@@ -25,6 +25,7 @@ from src.tools.models import (
     Position,
     RaceControlMessage,
     Session,
+    SessionResult,
     Stint,
 )
 
@@ -69,6 +70,35 @@ class OpenF1Client(ABC):
             raise OpenF1Error(f"{place!r} matches several {year} races, specify one: {options}")
         known = ", ".join(sorted({s.location for s in sessions})) or "none"
         raise OpenF1Error(f"No {year} {session_name} found for {place!r}. Known locations: {known}")
+
+    def get_latest_session(
+        self, now: datetime, session_name: str = "Race", settle: timedelta = timedelta(minutes=30)
+    ) -> Session:
+        """Most recent session that has finished (and whose data is free: OpenF1 releases it
+        ~30 minutes after the end). Looks back into the previous season early in the year."""
+        for year in (now.year, now.year - 1):
+            rows = self._fetch("sessions", {"year": year, "session_name": session_name})
+            done = [
+                Session.model_validate(r)
+                for r in rows
+                if r.get("date_end")
+                and datetime.fromisoformat(r["date_end"]) + settle <= now
+                and not r.get("is_cancelled")
+            ]
+            if done:
+                return max(done, key=lambda s: s.date_start)
+        raise OpenF1Error(f"No finished {session_name} found in {now.year - 1}-{now.year}.")
+
+    def get_results(self, session_key: int) -> list[SessionResult]:
+        rows = self._fetch("session_result", {"session_key": session_key})
+        return sorted(
+            (SessionResult.model_validate(r) for r in rows), key=lambda r: r.position or 99
+        )
+
+    def get_all_laps(self, session_key: int) -> list[Lap]:
+        """Every driver's laps in one request (vs one request per driver)."""
+        laps = [Lap.model_validate(r) for r in self._fetch("laps", {"session_key": session_key})]
+        return sorted(laps, key=lambda lap: (lap.driver_number, lap.lap_number))
 
     def get_session_by_key(self, session_key: int) -> Session:
         rows = self._fetch("sessions", {"session_key": session_key})

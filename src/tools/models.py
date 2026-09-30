@@ -79,3 +79,13 @@ class PitStop(_Record):
     driver_number: int
     lap_number: int
     lane_duration: float | None = None  # pit entry to pit exit, seconds
+
+
+class SessionResult(_Record):
+    driver_number: int
+    position: int | None = None
+    points: float | None = None
+    number_of_laps: int | None = None
+    dnf: bool = False
+    dns: bool = False
+    dsq: bool = False

@@ -85,6 +85,86 @@ def key_race_events(client: OpenF1Client, session_key: int) -> str:
     return _json(events)
 
 
+def race_summary(client: OpenF1Client, session: Session) -> str:
+    """Whole-field strategy table in ~2.5K chars: enough to compare every team's strategy
+    without any lap-by-lap tool calls (which blow the free-tier token budget)."""
+    sk = session.session_key
+    drivers = {d.driver_number: d for d in client.get_drivers(sk)}
+    results = {r.driver_number: r for r in client.get_results(sk)}
+    grid: dict[int, int] = {}
+    for p in sorted(client.get_positions(sk), key=lambda p: p.date):
+        grid.setdefault(p.driver_number, p.position)
+    stints: dict[int, list] = {}
+    for st in client.get_stints(sk):
+        stints.setdefault(st.driver_number, []).append(st)
+    laps: dict[int, list[Lap]] = {}
+    for lap in client.get_all_laps(sk):
+        laps.setdefault(lap.driver_number, []).append(lap)
+    pit_time: dict[int, float] = {}
+    for stop in client.get_pit_stops(sk):
+        pit_time[stop.driver_number] = pit_time.get(stop.driver_number, 0) + (
+            stop.lane_duration or 0
+        )
+
+    rows = []
+    order = sorted(
+        drivers, key=lambda n: results[n].position if n in results and results[n].position else 99
+    )
+    for n in order:
+        d, r = drivers[n], results.get(n)
+        finish = (
+            None
+            if not r
+            else ("DNF" if r.dnf else "DNS" if r.dns else "DSQ" if r.dsq else r.position)
+        )
+        plan, pace = [], []
+        for st in stints.get(n, []):
+            if not st.compound or st.lap_start is None or st.lap_end is None:
+                continue
+            length = st.lap_end - st.lap_start + 1
+            plan.append(f"{st.compound[0]}{length}")
+            in_stint = [
+                lap for lap in laps.get(n, []) if st.lap_start <= lap.lap_number <= st.lap_end
+            ]
+            clean = representative_laps(in_stint)
+            pace.append(
+                round(statistics.median(l.lap_duration for l in clean), 2) if clean else None
+            )
+        start = grid.get(n)
+        gained = start - finish if isinstance(finish, int) and start else None
+        rows.append(
+            [
+                d.name_acronym,
+                d.team_name,
+                start,
+                finish,
+                gained,
+                (r.points or 0) if r else 0,
+                max(len(plan) - 1, 0),
+                "-".join(plan),
+                pace,
+                round(pit_time.get(n, 0), 1),
+            ]
+        )
+    return _json(
+        {
+            "columns": [
+                "driver",
+                "team",
+                "grid",
+                "finish",
+                "places_gained",
+                "points",
+                "stops",
+                "stints (compound initial + laps)",
+                "median clean lap per stint (s)",
+                "total pit lane time (s)",
+            ],
+            "rows": rows,
+        }
+    )
+
+
 def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTool]:
     sk = session.session_key
     drivers: list[Driver] = client.get_drivers(sk)
