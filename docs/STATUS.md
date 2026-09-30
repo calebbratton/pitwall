@@ -41,6 +41,13 @@ the live feed; rejoin projections + reference lap time in snapshots; weather + O
 forecast events (KL Sunday: 98% rain); lap events. UI: track line (rejoin markers, battle),
 widget dashboard (move / min / max / hide, saved per browser, 1-column on phones), weather bar,
 run timeline.
+Eval run (20 scenarios): faithfulness 0.98 (19 judged), retrieval hit rate 1.0 but precision
+0.33 (reranker candidate), routing 0.95. Fixed from it: short race names ("Spa"), race-vs-rules
+routing. Judge caveat: Qwen (reasoning off, truths limit 15 to fit Groq's 1000 output-token/min
+cap) returns non-standard "borderline" verdicts and misses supported facts beyond the 15 it
+extracts — e.g. it marked a correct Overtake claim (B7.2.3 c.ii) unsupported. Treat scores as a
+lower bound; a better judge (or TypeSafe Jev, see chat 2026-09-30) is worth testing.
+Wet setting and forecast mixing are in (`predict --rain P / --forecast`); WET_PARAMS provisional.
 Waiting on: the 2023-2025 ingest (running in the background, resumable:
 `python -m src.warehouse.ingest --years 2025 2024 2023 --sessions Qualifying Race "Practice 1"
 "Practice 2" "Practice 3" Sprint "Sprint Qualifying" "Sprint Shootout"`, then
