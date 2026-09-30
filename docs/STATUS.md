@@ -82,6 +82,11 @@ advance: the real SignalR feed for a new session and the changeover FP1 -> FP2.
    ×2/×5 and sprint-only race pace all leave the tuner at qualifying weight 1.0 (LORO rank corr
    0.860 either way). In 2026, qualifying pace already carries the race-pace information;
    `long_run_level="team"` is kept as an option.
+   Why (measured 2026-09-30, fresh-tyre laps, driver x compound effects, FP 2023-26): FP2 lap
+   times get ~4.7 s/hour *slower* through the session (quali sims on low fuel first, race sims on
+   high fuel later). Fuel/programme differences (seconds) swamp track evolution (tenths), and
+   neither is observable from timing alone. Use practice for tyre degradation (the per-lap slope
+   within a run is largely fuel-independent) — the pit decision review needs that — not pace.
 4. **AI additions agreed with the user (2026-09-30):** ~~pre-race probability calibration~~ —
    **done** (`python -m src.sim.calibrate`): one temperature per horizon, leave-one-race-out on
    2026; win log-loss 1.57 → 1.53, podium 0.286 → 0.245, points 0.736 → 0.426 (raw sim was very
