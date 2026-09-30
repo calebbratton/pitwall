@@ -36,7 +36,12 @@ and rules, `docs/ROADMAP.md` for phases, `docs/SIMULATION.md` for the simulator 
    not physical) — `reference/pirelli_nominations_2026.json` has all 2026 C-numbers.
 4. Improve the practice long-run signal (team-level, fuel-corrected, sprint-weighted) so
    pre-race predictions beat qualifying order.
-5. Later: rejoin predictor / undercut check, rival pit-timing model (north star), evals.
+5. **AI additions agreed with the user (2026-09-30):** LLM-judge evals (DeepEval/Ragas:
+   faithfulness + retrieval precision, Qwen on Groq as judge) and probability calibration
+   (isotonic / temperature scaling) first; then a regulations reranker, Bayesian tyre priors
+   (PyMC/NumPyro), radio → structured events, live anomaly detection, LightGBM rival pit
+   model, tracing (Langfuse/LangSmith), voice, vision.
+6. Later: rejoin predictor / undercut check, rival pit-timing model (north star).
 
 ## Known caveats
 - Kuala Lumpur: no circuit history (last F1 race 2017); race distance assumed 56 laps.
