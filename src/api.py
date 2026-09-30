@@ -241,7 +241,7 @@ def _describe(session) -> dict[str, Any]:
     }
 
 
-def live_start(request: Request) -> dict[str, Any]:
+async def live_start(request: Request) -> dict[str, Any]:
     """Follow the live F1 timing feed (a server task; idempotent). Local tool: no auth."""
     return _describe(_start_live(request.app))
 

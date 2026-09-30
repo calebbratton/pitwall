@@ -109,7 +109,7 @@ class SessionRegistry:
 
     def start_live(
         self,
-        client_factory: Callable[[], LiveTimingClient] = LiveTimingClient,
+        client_factory: Callable[[], LiveTimingClient] | None = None,
         record: bool = True,
         **pump_kwargs: Any,
     ) -> LiveSession:
@@ -120,9 +120,9 @@ class SessionRegistry:
         recorder = Recorder(recording_folder()) if record else None
         session.recording = str(recorder.folder) if recorder else None
         session.monitor._radio_base = None  # set from SessionInfo once known (see _run_live)
-        session.task = asyncio.create_task(
-            _run_live(session, client_factory(), recorder, pump_kwargs)
-        )
+        # Resolved at call time (not as a default argument) so tests can substitute a fake.
+        client = (client_factory or LiveTimingClient)()
+        session.task = asyncio.create_task(_run_live(session, client, recorder, pump_kwargs))
         self.current_live = session
         return session
 
