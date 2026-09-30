@@ -46,6 +46,9 @@ class CarState:
     compound_c: str | None = None  # Pirelli compound for this weekend, e.g. "C4"
     life_laps: int | None = None  # proven life for this compound (season curves), if known
     life_source: str = ""  # how life_laps was derived, for the tyre note
+    # Compound `pace_s` was measured on (the recent clean laps). Differs from `compound` right
+    # after a stop; the simulator adds the compound offset between the two.
+    pace_compound: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,18 @@ class RaceState:
     pit_loss_green: float
     pit_loss_sc: float
     notes: list[str] = field(default_factory=list)
+    # Fresh-tyre pace per compound relative to a reference compound (s/lap, negative = faster),
+    # measured in this race (drivers who ran both). Empty = compounds treated as equal.
+    offset: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class StopPlan:
+    """A fixed next stop for one car: `lap` laps from now (1 = this lap), or None = no more stops;
+    `compound` fitted (None = the simulator's default choice)."""
+
+    lap: int | None
+    compound: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,9 +135,15 @@ def race_state(
     # than falling back to a generic default, which would over-correct long stints.
     deg = dict(DEFAULT_DEG)
     fitted = fit_tyre_model(clean, method="stint", fuel_gain=0.0).compounds if clean else {}
+    offset: dict[str, float] = {}
     for compound, fit in fitted.items():
         if fit.n_stints >= 3:
             deg[compound] = min(max(fit.deg_s_per_lap, 0.0), 0.3)
+        if fit.offset_s is not None:
+            offset[compound] = fit.offset_s
+    if offset:  # the reference compound has no offset of its own
+        for compound in fitted:
+            offset.setdefault(compound, 0.0)
     defaulted = [c for c in DEFAULT_DEG if c not in fitted or fitted[c].n_stints < 3]
     if curves and snapshot.year:
         from src.models.tyre_curves import late_slope
@@ -140,12 +161,14 @@ def race_state(
 
     # Recent pace per car, tyre-age corrected, relative to the field median.
     pace: dict[str, float] = {}
+    pace_compound: dict[str, str | None] = {}
     for car, records in monitor.laps.items():
         recent = [r for r in records if _clean(r)][-RECENT_LAPS:]
         if len(recent) >= 3:
             pace[car] = statistics.median(
                 r.time_s - deg.get(r.compound, 0.06) * r.tyre_age for r in recent
             )
+            pace_compound[car] = recent[-1].compound
     field_median = statistics.median(pace.values()) if pace else 0.0
 
     cars = []
@@ -166,6 +189,7 @@ def race_state(
                 stops=d.pit_stops,
                 owes_compound=d.needs_second_compound,
                 pace_s=pace.get(d.number, field_median) - field_median,
+                pace_compound=pace_compound.get(d.number),
                 compound_c=(cn := c_number(snapshot.year or 0, snapshot.location, d.compound)),
                 **_life(cn, curves, snapshot.year),
             )
@@ -181,6 +205,7 @@ def race_state(
         pit_loss_green=pit_loss[0],
         pit_loss_sc=pit_loss[1],
         notes=notes,
+        offset=offset,
     )
 
 
@@ -220,7 +245,11 @@ def simulate_from(
     sims: int = 2000,
     seed: int = 0,
     calib: InRaceParams | None = None,
+    plan: dict[str, StopPlan] | None = None,
+    return_positions: bool = False,
 ) -> dict:
+    """`plan`: car number -> a fixed next stop (the pit decision review forces one car's stop
+    and replays the others' real ones); other cars stop as the simulator decides."""
     p = params or SimParams()
     cal = calib or DEFAULT_CALIBRATION
     rng = np.random.default_rng(seed)
@@ -250,13 +279,37 @@ def simulate_from(
         # do): most of the time, not always — some gamble on track position.
         take_now = rng.random((sims, n)) < cal.take_neutralised_stop
         stop_lap = np.where(needs_stop & take_now, 1, stop_lap)
-    new_deg = np.array(
-        [state.deg.get("HARD" if c.compound != "HARD" else "MEDIUM", 0.05) for c in cars]
+    plan = plan or {}
+    new_compound = [
+        (plan[c.number].compound if c.number in plan and plan[c.number].compound else None)
+        or ("HARD" if c.compound != "HARD" else "MEDIUM")
+        for c in cars
+    ]
+    for i, c in enumerate(cars):
+        if c.number in plan:
+            planned = plan[c.number].lap
+            stop_lap[:, i] = planned if planned is not None and planned <= remaining else -1
+    new_deg = np.array([state.deg.get(nc, 0.05) for nc in new_compound])[None, :]
+    new_life = np.array([state.life.get(nc, 30) for nc in new_compound], dtype=float)[None, :]
+    # Fresh-tyre pace change from switching compound (pace_s is on the current compound).
+    new_offset = np.array(
+        [
+            state.offset.get(nc, 0.0) - state.offset.get(c.pace_compound or c.compound or "", 0.0)
+            for c, nc in zip(cars, new_compound, strict=True)
+        ]
     )[None, :]
-    new_life = np.array(
-        [state.life.get("HARD" if c.compound != "HARD" else "MEDIUM", 30) for c in cars],
-        dtype=float,
-    )[None, :]
+    # Cars whose recent pace was set on another compound (they just stopped) start with the
+    # offset between the two.
+    offset_now = np.tile(
+        np.array(
+            [
+                state.offset.get(c.compound or "", 0.0)
+                - state.offset.get(c.pace_compound or c.compound or "", 0.0)
+                for c in cars
+            ]
+        ),
+        (sims, 1),
+    )
     deg = np.tile(deg_now, (sims, 1))
     life_now = np.tile(life, (sims, 1))
     running = np.ones((sims, n), dtype=bool)
@@ -268,13 +321,14 @@ def simulate_from(
     for lap in range(1, remaining + 1):
         order = np.argsort(T, axis=1)
         cliff = CLIFF_S_PER_LAP2 * np.maximum(age - life_now, 0) ** 1.5
-        lap_time = pace + deg * age + cliff + rng.normal(0, p.lap_noise, (sims, n))
+        lap_time = pace + offset_now + deg * age + cliff + rng.normal(0, p.lap_noise, (sims, n))
         pit_now = stop_lap == lap
         loss = neutralised_loss if lap == 1 else state.pit_loss_green
         lap_time = lap_time + np.where(pit_now, loss, 0.0)
         age = np.where(pit_now, 0, age + 1)
         deg = np.where(pit_now, new_deg, deg)
         life_now = np.where(pit_now, new_life, life_now)
+        offset_now = np.where(pit_now, new_offset, offset_now)
         new_T = T + lap_time
         if lap == 1 and queue_after_first_lap:
             # Everyone lines up behind the SC in their order after the stops (0.8 s apart); no
@@ -314,4 +368,5 @@ def simulate_from(
         "sims": sims,
         "table": table,
         "notes": state.notes,
+        **({"positions": positions} if return_positions else {}),
     }
