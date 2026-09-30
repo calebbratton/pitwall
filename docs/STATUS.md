@@ -32,6 +32,23 @@ and rules, `docs/ROADMAP.md` for phases, `docs/SIMULATION.md` for the simulator 
   `python -m src.warehouse.ingest --years 2026 --sessions "Practice 1" "Practice 2" "Practice 3" Qualifying --settle-minutes 45`
   then `python -m src.warehouse.build` and the predict command above. Score it after the race.
 
+## Overnight 2026-09-30 → 10-01 (hand-off)
+Done and committed: pre-race probability calibration (`src/sim/calibrate.py`); eval suite
+(`python -m src.evals.run`; 15/15 rules scenarios scored, faithfulness ~1.0 except
+unsafe-release 0.7; race scenarios still running/pending OpenF1 budget); grid penalties
+(`predict --penalty VER=10 --pit-lane HAM`) and a pre-race prediction from the official grid on
+the live feed; rejoin projections + reference lap time in snapshots; weather + Open-Meteo
+forecast events (KL Sunday: 98% rain); lap events. UI: track line (rejoin markers, battle),
+widget dashboard (move / min / max / hide, saved per browser, 1-column on phones), weather bar,
+run timeline.
+Waiting on: the 2023-2025 ingest (running in the background, resumable:
+`python -m src.warehouse.ingest --years 2025 2024 2023 --sessions Qualifying Race "Practice 1"
+"Practice 2" "Practice 3" Sprint "Sprint Qualifying" "Sprint Shootout"`, then
+`python -m src.warehouse.build`). Then: `python -m src.analysis.predictors` (2025+2026 preview:
+qualifying pace beats qualifying+grid; team race pace in earlier races is the only extra signal),
+wet-race model (wet races: quali rank corr 0.65 vs 0.83 dry), re-judge evals with
+`--only unsafe-release overtake-mode --rejudge`.
+
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.
