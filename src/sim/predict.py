@@ -39,7 +39,11 @@ def main() -> None:
     if args.penalty or args.pit_lane:
         base = build_inputs(con, args.year, args.place, laps=args.laps)
         number = {d.tla: d.number for d in base.drivers}
-        unknown = [t for t in [p.split("=")[0] for p in args.penalty] + args.pit_lane if t.upper() not in number]
+        unknown = [
+            t
+            for t in [p.split("=")[0] for p in args.penalty] + args.pit_lane
+            if t.upper() not in number
+        ]
         if unknown:
             ap.error(f"unknown driver(s) {unknown}; choose from {sorted(number)}")
         _, sessions = weekend_sessions(con, args.year, args.place)

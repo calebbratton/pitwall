@@ -32,6 +32,9 @@ ENDPOINTS: dict[str, str] = {
     "positions": "position",
     "intervals": "intervals",
 }
+# Car-by-car position/interval streams are the big responses and only mean something in races
+# (grid order, gaps); practice and qualifying skip them.
+RACE_ONLY = {"positions", "intervals"}
 SETTLE = timedelta(hours=6)  # only ingest sessions whose data has stopped changing
 
 log = logging.getLogger(__name__)
@@ -78,7 +81,11 @@ def recompute_derived(raw_dir: Path = RAW_DIR) -> int:
 def ingest_session(client: OpenF1Client, session: dict, raw_dir: Path = RAW_DIR) -> None:
     sk = session["session_key"]
     fetched: dict[str, list[dict]] = {}
+    is_race = session.get("session_type") == "Race"  # includes sprints
     for table, endpoint in ENDPOINTS.items():
+        if table in RACE_ONLY and not is_race:
+            fetched[table] = []
+            continue
         params: Params = {"session_key": sk}
         fetched[table] = client._fetch(endpoint, params)
 

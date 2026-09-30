@@ -87,5 +87,12 @@ def with_schema(model: BaseChatModel, schema: type[BaseModel]) -> Runnable:
         # Groq's tool-call route fails hard when the model answers in prose instead
         # ("Tool choice is required, but model did not call a tool"); JSON-schema mode
         # constrains the output itself.
-        return model.with_structured_output(schema, method="json_schema")
+        # Groq intermittently rejects a generation that fails its own JSON validation
+        # (400 json_validate_failed, often with an empty generation); a fresh sample usually
+        # passes.
+        from groq import BadRequestError
+
+        return model.with_structured_output(schema, method="json_schema").with_retry(
+            retry_if_exception_type=(BadRequestError,), stop_after_attempt=3
+        )
     return model.with_structured_output(schema)

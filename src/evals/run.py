@@ -97,7 +97,7 @@ def judge_faithfulness(run: dict, judge) -> dict:
         f"{t['tool']}({json.dumps(t['args'])}): {t['result']}" for t in run["telemetry"]
     ]
     metric = FaithfulnessMetric(
-        model=judge, async_mode=False, include_reason=True, truths_extraction_limit=40
+        model=judge, async_mode=False, include_reason=True, truths_extraction_limit=15
     )
     metric.measure(
         LLMTestCase(input=run["question"], actual_output=run["answer"], retrieval_context=context)
@@ -136,13 +136,26 @@ def evaluate(
         for n, scenario in enumerate(scenarios, 1):
             path = OUT / f"{scenario.id}.json"
             cached = json.loads(path.read_text()) if path.exists() else {}
-            if rerun or cached.get("question") != scenario.question:
+            stale = str(cached.get("error") or "").startswith("graph failed")
+            if rerun or stale or cached.get("question") != scenario.question:
                 if graph is None:
                     index_path = _index_copy()
                     index = RegulationIndex(index_path)
                     graph = build_graph(HttpOpenF1Client(), index, seasons=supported_seasons())
                 print(f"[{n}/{len(scenarios)}] {scenario.id}: running graph", flush=True)
-                cached = run_graph(graph, scenario)
+                try:
+                    cached = run_graph(graph, scenario)
+                except Exception as e:  # noqa: BLE001 — record the failure, keep going
+                    print(f"   graph failed: {type(e).__name__}: {str(e)[:200]}", flush=True)
+                    cached = {
+                        "question": scenario.question,
+                        "answer": "",
+                        "mode": None,
+                        "error": f"graph failed: {type(e).__name__}",
+                        "rules": [],
+                        "telemetry": [],
+                        "steps": [],
+                    }
                 time.sleep(PAUSE_S)
             run = cached
             if use_judge and run.get("error") is None:

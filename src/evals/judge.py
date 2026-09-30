@@ -55,7 +55,9 @@ class GroqJudge(DeepEvalBaseLLM):
                     raise
                 # Schema mode rejected (e.g. an unsupported JSON-schema feature): fall back to
                 # plain text, which DeepEval parses as JSON itself.
-        return call_with_backoff(self._chat.invoke, prompt).content
+        return call_with_backoff(
+            self._chat.invoke, prompt + "\n\nReply with the JSON object only, no prose."
+        ).content
 
     async def a_generate(self, prompt: str, schema: type[BaseModel] | None = None):
         return self.generate(prompt, schema)

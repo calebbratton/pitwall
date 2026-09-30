@@ -164,6 +164,17 @@ decide **which predictors and functional forms** to use; 2026 data then sets the
 ### 9. Live
 - SignalR client + recorder; token-gated positions/telemetry for local use only.
 
+### 9a. Pit-wall screens for watching (user reference, 2026-09-30)
+The user shared photos of real team pit-wall screens (timing towers, run timeline, track map with
+pit-rejoin markers, track line, weather/race control). Adopt, in order:
+1. **Rejoin markers**: where the followed car would come out if it pitted now (green / SC /
+   VSC loss) and who it would be behind — the rejoin predictor with a picture.
+2. **Track line**: the field on one line by gap, pit-loss window marked. Built from timing
+   gaps, so it works live without the F1 TV token (Position.z is gated live).
+3. **Run timeline**: lap × driver grid of lap times coloured best / normal / slow / pit.
+4. **Battle panel**: followed car's gaps ahead/behind with a few-lap trend, Overtake range (<1 s).
+5. **Weather strip**: WeatherData (track/air temp) + the Open-Meteo race-window rain forecast.
+
 ### 9b. Season analysis in chat (after the items above)
 - **"Season" chat mode**: route season-wide questions ("what type of track suits McLaren this
   season?", "which team is best on high-speed tracks?") to `src/analysis/track_fit.py`
