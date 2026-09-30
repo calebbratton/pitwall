@@ -43,6 +43,7 @@ class Stint(_Record):
 class Lap(_Record):
     driver_number: int
     lap_number: int
+    date_start: str | None = None
     lap_duration: float | None = None
     duration_sector_1: float | None = None
     duration_sector_2: float | None = None

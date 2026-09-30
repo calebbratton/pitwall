@@ -7,7 +7,16 @@ import argparse
 import json
 from pathlib import Path
 
-from src.tools.models import Driver, Lap, RaceControlMessage, Session, Stint
+from src.tools.models import (
+    Driver,
+    Lap,
+    PitStop,
+    Position,
+    RaceControlMessage,
+    Session,
+    SessionResult,
+    Stint,
+)
 from src.tools.openf1 import HttpOpenF1Client
 
 FIXTURES_ROOT = Path("tests/fixtures/openf1")
@@ -47,6 +56,10 @@ def main() -> None:
     _dump(fetch("drivers", {"session_key": sk}), Driver, out / "drivers.json")
     _dump(fetch("stints", {"session_key": sk}), Stint, out / "stints.json")
     _dump(fetch("race_control", {"session_key": sk}), RaceControlMessage, out / "race_control.json")
+    _dump(fetch("session_result", {"session_key": sk}), SessionResult, out / "session_result.json")
+    _dump(fetch("pit", {"session_key": sk}), PitStop, out / "pit.json")
+    # Positions only change a few hundred times a race; the full series is small.
+    _dump(fetch("position", {"session_key": sk}), Position, out / "position.json")
     laps = [
         row for d in args.drivers for row in fetch("laps", {"session_key": sk, "driver_number": d})
     ]

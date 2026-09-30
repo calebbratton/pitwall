@@ -33,7 +33,7 @@ from src.rag.glossary import expand_query
 from src.rag.index import RegulationIndex
 from src.rag.sources import source_for_race
 from src.tools.openf1 import OpenF1Client, OpenF1Error
-from src.tools.telemetry import build_telemetry_tools, key_race_events
+from src.tools.telemetry import build_telemetry_tools, key_race_events, race_summary
 
 MAX_FETCH_ROUNDS = 4
 RULES_PER_QUERY = 4
@@ -45,6 +45,7 @@ MAX_TOOL_RESULT_CHARS = 2500
 OLD_ROUND_RESULT_CHARS = 300  # earlier rounds' results, when resent to the fetcher
 MAX_ANALYST_TELEMETRY_CHARS = 12000
 HISTORY_MESSAGES = 6
+LATEST_PLACES = {"latest", "last", "last race", "latest race", "most recent", "most recent race"}
 
 
 def memory_checkpointer() -> InMemorySaver:
@@ -107,8 +108,13 @@ def build_graph(
             tools_cache[session_key] = build_telemetry_tools(openf1, session)
         return tools_cache[session_key]
 
+    def _now() -> datetime:
+        return (
+            datetime.combine(today, datetime.max.time(), tzinfo=UTC) if today else datetime.now(UTC)
+        )
+
     def _today() -> date:
-        return today or datetime.now(UTC).date()
+        return _now().date()
 
     # --- nodes ---------------------------------------------------------------------------
 
@@ -150,10 +156,14 @@ def build_graph(
         if decision.mode == "race" and decision.place:
             year = decision.year or _today().year
             try:
-                session = openf1.get_session(year, decision.place)
+                if decision.place.strip().casefold() in LATEST_PLACES:
+                    session = openf1.get_latest_session(_now())
+                    year = session.year
+                else:
+                    session = openf1.get_session(year, decision.place)
             except OpenF1Error as e:
                 return {"error": str(e), "evaluation_steps": [*steps, f"resolve: {e}"]}
-            if datetime.fromisoformat(session.date_start) > datetime.now(UTC):
+            if datetime.fromisoformat(session.date_start) > _now():
                 msg = f"{session.label} hasn't happened yet, so there is no race data."
                 return {"error": msg, "evaluation_steps": [*steps, f"resolve: {msg}"]}
             race_context = {
@@ -181,8 +191,13 @@ def build_graph(
 
         telemetry = []
         if decision.mode == "race":
-            events = key_race_events(openf1, race_context["session_key"])
-            telemetry = [ToolResult(tool="key_race_events", args={}, result=events)]
+            session_key = race_context["session_key"]
+            events = key_race_events(openf1, session_key)
+            summary = race_summary(openf1, openf1.get_session_by_key(session_key))
+            telemetry = [
+                ToolResult(tool="key_race_events", args={}, result=events),
+                ToolResult(tool="race_summary", args={}, result=summary),
+            ]
         return {
             "race_context": race_context,
             "reg_context": {"season": source.season, "issue": source.issue},
@@ -205,6 +220,7 @@ def build_graph(
                     race=_race_label(state),
                     max_rounds=MAX_FETCH_ROUNDS,
                     key_events=state["fetched_telemetry_json"][0]["result"],
+                    race_summary=state["fetched_telemetry_json"][1]["result"],
                 )
             ),
             HumanMessage(state["current_query"]),

@@ -139,14 +139,16 @@ def test_race_question_fetches_events_runs_tools_and_uses_regs_in_force():
     results = state["fetched_telemetry_json"]
     assert [r["tool"] for r in results] == [
         "key_race_events",
+        "race_summary",
         "get_tyre_stints",
         "get_tyre_stints",
         "made_up_tool",
     ]
     assert "RED FLAG" in results[0]["result"]
-    assert '"compound":"HARD"' in results[1]["result"]
-    assert results[2]["result"].startswith("ERROR: unknown driver")
-    assert results[3]["result"].startswith("ERROR: unknown tool")
+    assert '"LEC","Ferrari"' in results[1]["result"]
+    assert '"compound":"HARD"' in results[2]["result"]
+    assert results[3]["result"].startswith("ERROR: unknown driver")
+    assert results[4]["result"].startswith("ERROR: unknown tool")
     # The analyst sees the telemetry it must ground its numbers in.
     assert "HARD" in analyst.calls[0][0].content
 
@@ -222,3 +224,22 @@ def test_fetch_prompt_stays_small_across_rounds():
     old_results = [m for m in third_call if isinstance(m, ToolMessage)][:3]
     assert all(len(m.content) < 400 for m in old_results)
     assert all(len(r["result"]) <= 2600 for r in state["fetched_telemetry_json"])
+
+
+def test_latest_race_resolves_to_most_recent_finished_session():
+    router = Scripted(
+        [RouteDecision(mode="race", place="latest", focus="f", regulation_queries=["q"])]
+    )
+    graph = build_graph(
+        MockOpenF1Client(MONACO_2024),
+        FakeIndex(["30.5"]),
+        models={
+            "router": router,
+            "fetcher": Scripted([AIMessage("done")]),
+            "analyst": Scripted([_analysis()]),
+        },
+        today=date(2024, 5, 28),  # two days after Monaco 2024, before Canada
+    )
+    state = _ask(graph, "What team had the best strategy last race?")
+    assert state["race_context"]["session_key"] == 9523
+    assert state["reg_context"] == {"season": 2024, "issue": 6}

@@ -11,11 +11,12 @@ Design constraints (Groq free tier: 8K tokens/minute per model):
 import json
 import statistics
 import unicodedata
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
-from src.tools.models import Driver, Lap, Session
+from src.tools.models import Driver, Lap, RaceControlMessage, Session
 from src.tools.openf1 import OpenF1Client
 
 MAX_LAPS_PER_CALL = 20
@@ -34,10 +35,65 @@ def _fold(s: str) -> str:
     return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 
 
-def representative_laps(laps: list[Lap]) -> list[Lap]:
-    """Timed green-flag laps: drops lap 1, pit-out laps, and laps > SLOW_LAP_FACTOR x median."""
+Window = tuple[datetime, datetime, str]  # (start, end, kind)
+# How long after "SAFETY CAR IN THIS LAP" / "VSC ENDING" laps are still unrepresentative
+# (the SC's in-lap and the restart lap), as multiples of a typical lap / seconds.
+SC_TAIL_LAPS = 1.5
+VSC_TAIL_S = 15.0
+
+
+def _dt(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def neutralised_windows(messages: list[RaceControlMessage], laps: list[Lap]) -> list[Window]:
+    """Time windows when the race wasn't at racing speed: safety car, VSC, red flag (+ the
+    restart). Laps overlapping them don't represent pace or tyre wear."""
+    timed = [lap.lap_duration for lap in laps if lap.lap_duration]
+    typical = statistics.median(timed) if timed else 90.0
+    lap_starts = sorted(_dt(lap.date_start) for lap in laps if lap.date_start)
+    windows: list[Window] = []
+    open_since: dict[str, datetime] = {}
+    for m in sorted(messages, key=lambda m: m.date):
+        text, when = m.message.upper(), _dt(m.date)
+        if "VIRTUAL SAFETY CAR DEPLOYED" in text:
+            open_since["VSC"] = when
+        elif "VIRTUAL SAFETY CAR ENDING" in text and "VSC" in open_since:
+            windows.append((open_since.pop("VSC"), when + timedelta(seconds=VSC_TAIL_S), "VSC"))
+        elif "SAFETY CAR DEPLOYED" in text:
+            open_since["SC"] = when
+        elif "SAFETY CAR IN THIS LAP" in text and "SC" in open_since:
+            tail = timedelta(seconds=typical * SC_TAIL_LAPS)
+            windows.append((open_since.pop("SC"), when + tail, "SC"))
+        elif m.flag == "RED":
+            # Until the end of the first lap after the restart (a standing/rolling start).
+            restart = next((t for t in lap_starts if t > when), None)
+            end = restart + timedelta(seconds=typical * 1.5) if restart else when
+            windows.append((when, end, "RED"))
+    for kind, since in open_since.items():  # never ended (e.g. finished under SC)
+        windows.append((since, datetime.max.replace(tzinfo=UTC), kind))
+    return windows
+
+
+def _overlaps(lap: Lap, windows: list[Window]) -> bool:
+    if not lap.date_start or not lap.lap_duration:
+        return False
+    start = _dt(lap.date_start)
+    end = start + timedelta(seconds=lap.lap_duration)
+    return any(start < w_end and end > w_start for w_start, w_end, _ in windows)
+
+
+def representative_laps(laps: list[Lap], windows: list[Window] = ()) -> list[Lap]:
+    """Timed green-flag laps: drops lap 1, pit-out laps, laps overlapping a SC/VSC/red-flag
+    window, then laps > SLOW_LAP_FACTOR x the median of what's left (in-laps, traffic)."""
     timed = [
-        lap for lap in laps if lap.lap_duration and lap.lap_number > 1 and not lap.is_pit_out_lap
+        lap
+        for lap in laps
+        if lap.lap_duration
+        and lap.lap_number > 1
+        and not lap.is_pit_out_lap
+        and not _overlaps(lap, windows)
     ]
     if not timed:
         return []
@@ -45,8 +101,8 @@ def representative_laps(laps: list[Lap]) -> list[Lap]:
     return [lap for lap in timed if lap.lap_duration <= median * SLOW_LAP_FACTOR]
 
 
-def pace_summary(laps: list[Lap]) -> dict[str, Any]:
-    clean = representative_laps(laps)
+def pace_summary(laps: list[Lap], windows: list[Window] = ()) -> dict[str, Any]:
+    clean = representative_laps(laps, windows)
     summary: dict[str, Any] = {
         "laps_requested": len(laps),
         "laps_used": len(clean),
@@ -97,8 +153,10 @@ def race_summary(client: OpenF1Client, session: Session) -> str:
     stints: dict[int, list] = {}
     for st in client.get_stints(sk):
         stints.setdefault(st.driver_number, []).append(st)
+    all_laps = client.get_all_laps(sk)
+    windows = neutralised_windows(client.get_race_control(sk), all_laps)
     laps: dict[int, list[Lap]] = {}
-    for lap in client.get_all_laps(sk):
+    for lap in all_laps:
         laps.setdefault(lap.driver_number, []).append(lap)
     pit_time: dict[int, float] = {}
     for stop in client.get_pit_stops(sk):
@@ -126,7 +184,7 @@ def race_summary(client: OpenF1Client, session: Session) -> str:
             in_stint = [
                 lap for lap in laps.get(n, []) if st.lap_start <= lap.lap_number <= st.lap_end
             ]
-            clean = representative_laps(in_stint)
+            clean = representative_laps(in_stint, windows)
             pace.append(
                 round(statistics.median(l.lap_duration for l in clean), 2) if clean else None
             )
@@ -168,6 +226,14 @@ def race_summary(client: OpenF1Client, session: Session) -> str:
 def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTool]:
     sk = session.session_key
     drivers: list[Driver] = client.get_drivers(sk)
+    windows_cache: list[list[Window]] = []
+
+    def windows() -> list[Window]:
+        if not windows_cache:
+            windows_cache.append(
+                neutralised_windows(client.get_race_control(sk), client.get_all_laps(sk))
+            )
+        return windows_cache[0]
 
     def resolve(driver: str) -> Driver | str:
         key = _fold(str(driver))
@@ -226,7 +292,7 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
             note = f"{len(laps)} laps exceeds {MAX_LAPS_PER_CALL}; returning pace summary instead"
             return _json(
                 {"note": note, "driver": d.name_acronym, "laps": [lap_start, lap_end]}
-                | pace_summary(laps)
+                | pace_summary(laps, windows())
             )
         return _json([[lap.lap_number, lap.lap_duration, lap.is_pit_out_lap] for lap in laps])
 
@@ -234,12 +300,14 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
     def get_pace_summary(driver: str, lap_start: int, lap_end: int) -> str:
         """Pace statistics for one driver over a lap range: mean, median, best lap, and lap-time
         trend (seconds per lap; positive = slowing, i.e. degradation). Excludes lap 1, pit-out
-        laps and laps >7% slower than the median (safety car, VSC, red flag, in-laps)."""
+        laps, safety car / VSC / red flag laps, and laps >7% slower than the median."""
         d = resolve(driver)
         if isinstance(d, str):
             return d
         laps = client.get_laps(sk, d.driver_number, lap_start, lap_end)
-        return _json({"driver": d.name_acronym, "laps": [lap_start, lap_end]} | pace_summary(laps))
+        return _json(
+            {"driver": d.name_acronym, "laps": [lap_start, lap_end]} | pace_summary(laps, windows())
+        )
 
     @tool
     def get_race_control(

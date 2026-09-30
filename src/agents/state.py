@@ -62,7 +62,8 @@ class RouteDecision(BaseModel):
     place: str | None = Field(
         None,
         description="Race location as a country, city or circuit (e.g. Monaco, Madrid, Silverstone)."
-        " Null for rules questions that don't name a race, or to keep the previous race.",
+        ' Use "latest" for the last / most recent race. Null for rules questions that don\'t name'
+        " a race, or to keep the previous race.",
     )
     focus: str = Field(
         description="One sentence: what to analyse, naming drivers/teams/laps if mentioned."

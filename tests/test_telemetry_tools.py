@@ -64,3 +64,52 @@ def test_key_race_events_has_red_flag_and_finish():
     events = json.loads(key_race_events(MockOpenF1Client(MONACO_2024), 9523))
     assert [1, "RED FLAG"] in events
     assert [78, "CHEQUERED FLAG"] in events
+
+
+def test_race_summary_monaco_2024():
+    from src.tools.telemetry import race_summary
+
+    client = MockOpenF1Client(MONACO_2024)
+    summary = json.loads(race_summary(client, client.get_session(2024, "Monaco")))
+    rows = {r[0]: r for r in summary["rows"]}
+    lec = rows["LEC"]
+    assert lec[1:6] == ["Ferrari", 1, 1, 0, 25.0]  # team, grid, finish, gained, points
+    assert lec[7] == "M1-H78"  # the lap-1 red flag tyre change
+    assert summary["rows"][0][0] == "LEC"  # ordered by finish
+    assert len(json.dumps(summary)) < 3000  # small enough for the free-tier token budget
+
+
+def test_neutralised_laps_excluded_from_pace():
+    from datetime import UTC, datetime, timedelta
+
+    from src.tools.models import RaceControlMessage
+    from src.tools.telemetry import neutralised_windows, representative_laps
+
+    start = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    laps = [
+        Lap(
+            driver_number=4,
+            lap_number=n,
+            lap_duration=90.0,
+            date_start=(start + timedelta(seconds=90 * n)).isoformat(),
+        )
+        for n in range(1, 21)
+    ]
+    rc = [
+        RaceControlMessage(
+            date=(start + timedelta(seconds=90 * 10 + 5)).isoformat(),
+            category="SafetyCar",
+            message="SAFETY CAR DEPLOYED",
+        ),
+        RaceControlMessage(
+            date=(start + timedelta(seconds=90 * 12 + 5)).isoformat(),
+            category="SafetyCar",
+            message="SAFETY CAR IN THIS LAP",
+        ),
+    ]
+    windows = neutralised_windows(rc, laps)
+    assert [w[2] for w in windows] == ["SC"]
+    kept = [lap.lap_number for lap in representative_laps(laps, windows)]
+    # SC out during lap 10, in at the end of lap 12: laps 10-12 and the restart lap 13 are
+    # excluded (lap 1 always is).
+    assert kept == [2, 3, 4, 5, 6, 7, 8, 9, 14, 15, 16, 17, 18, 19, 20]

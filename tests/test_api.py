@@ -82,7 +82,11 @@ def test_chat_streams_thread_steps_and_answer_then_keeps_thread():
         assert answer["race"]["session_key"] == 9523
         assert answer["regs"] == {"season": 2024, "issue": 6}
         assert answer["citations"][0]["article"] == "30.5"
-        assert [c["tool"] for c in answer["tool_calls"]] == ["key_race_events", "get_tyre_stints"]
+        assert [c["tool"] for c in answer["tool_calls"]] == [
+            "key_race_events",
+            "race_summary",
+            "get_tyre_stints",
+        ]
         assert "[30.5]" in answer["answer"]
 
         thread_id = events[0][1]["thread_id"]
