@@ -15,6 +15,9 @@ dependencies = [
     "pypdf",
     "fastapi",
     "uvicorn",
+    "websockets",
+    "duckdb",
+    "pytz",  # duckdb needs it to return TIMESTAMPTZ values
 ]
 
 [project.optional-dependencies]

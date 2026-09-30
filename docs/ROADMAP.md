@@ -39,35 +39,72 @@ data makes the simulation accurate, and the LLM explains results rather than jud
 - Exclude SC/VSC/red-flag laps from all pace statistics (track-status timeline).
 - "Last race" resolution and the compact whole-field race summary (token-limit fix).
 
-### 2. Tyre and lap-time model from the current weekend
-- Lap extraction from the feed (practice, race; archive and live).
-- Per-compound degradation (+ cliff) from practice long runs, updated live in the race; fuel
-  correction; per-driver pace and consistency; all with uncertainty.
-- Map SOFT/MEDIUM/HARD to Pirelli's C-compounds for the event.
+### 2. Data warehouse (DuckDB) — numbers in SQL, text in Qdrant
+- Local DuckDB/Parquet store of 2024–2026 races: laps (tagged: neutralised?, compound, tyre age,
+  stint, pit in/out, position, gap ahead, weather), stints, pit stops, results, race control.
+  Source: OpenF1 free historical (rate-limited; one-time, cached) — live laps from the feed use
+  the same schema later.
+- Chat gets curated warehouse query tools (small aggregate results = cheap tokens); optional
+  read-only SQL with row limits. A vector DB is for text (radio, race control, stewards, race
+  reports), not for numbers.
 
-### 3. Race simulator
+### 3. Tyre and lap-time model from the current weekend
+- Per-compound degradation (+ cliff) from practice long runs, updated live in the race; fuel
+  correction; per-driver pace and consistency; all with uncertainty. Fitting runs on the warehouse.
+- Map SOFT/MEDIUM/HARD to Pirelli's C-compounds for the event.
+- First consumers: **undercut/overcut check** (two-car: fresh-tyre gain vs rival's old tyres,
+  out-lap warm-up, gap, until rival responds) shown per close battle in the LIVE tab and
+  backtested on 2026 undercut attempts; **strategy-gain metric** (places gained beyond pace,
+  excluding retirements ahead, vs a pace-expected finish rather than the grid).
+
+### 3b. Pit-wall tools on the tyre model (early visible wins)
+- **Rejoin predictor**: "box now → P7, 1.2 s behind OCO, in traffic for ~4 laps", shown as a
+  ghost car on the track map. Building block for the undercut check.
+- **Pit stop time distribution per team** (stationary time + slow-stop risk) from pit data.
+
+### 4. Race simulator
 - Deterministic single run that reproduces a finished race from its real strategies (validation).
 - Traffic/overtaking model per circuit, dirty air, SC/VSC mechanics, rules.
 
-### 4. Monte Carlo decisions
+### 4b. Opponents, incidents and 2026 specifics
+- **Rival response model**: per-team 2026 tendencies from the warehouse (cover undercuts? SC
+  reaction time? double stacks?) — rivals simulated as likely responses, not fixed plans.
+- **SC/VSC hazard per circuit and lap** (lap 1, restarts, street circuits) from 2024–2026.
+- **2026 energy/overtaking**: battery-deployment signatures from speed traps / CarData feed the
+  overtaking model.
+- **Live state estimation**: Kalman-filtered gaps and pace for stable projections.
+- **Radio → structured signals**: small LLM extraction of events ("tyres gone", damage, "box")
+  from transcripts, used as model inputs.
+
+### 5. Monte Carlo decisions
 - Options × ~1,000 simulations with common random numbers; expected points/position + risk.
-- Replaces the rule-of-thumb pit calls; powers "best strategy", counterfactual and "what if the
+- Replaces the rule-of-thumb pit calls; continuous green-flag pit windows; VSC-specific timing
+  (a VSC can end before the car reaches pit entry); powers "best strategy", counterfactual and "what if the
   SC comes now?" questions in chat, and a pit-window chart in the UI.
 
-### 5. Backtesting & evals (from phase 2 onwards)
+### 6. Backtesting & evals (from phase 3 onwards)
 - Lap-time prediction error; simulator finish-order accuracy; 2026 SC/VSC decision backtests
   scored on outcomes with calibration; leave-one-race-out.
 - The original 20 chat scenarios: faithfulness and retrieval precision (DeepEval).
+- Expert-consensus checks: per race, a few claims from post-race coverage (e.g. Baku 2026: the
+  medium→soft switch under the SC beat soft→medium; Lindblad's gains were half retirements)
+  that the tool's analysis should agree with.
 
-### 6. Weather
+### 7. Weather
+- Rain radar nowcasting + crossover-lap model for intermediates.
 - Live `WeatherData`; Open-Meteo forecast → rain probability as a simulator input
   (crossover/intermediate calls); track-temperature effect on degradation.
 
-### 7. Driving style (CarData.z)
+### 8. Driving style (CarData.z)
 - Braking, throttle, lift-and-coast, tyre-management signatures; feeds per-driver tyre model.
 
-### 8. Live
+### 8b. Strategist controls
+- "Assume the car behind 1-stops", "assume an SC on lap 40": edit assumptions and re-run
+  (strategy trees). Benchmark UX: broadcast "F1 Insights" graphics, but with assumptions and
+  probabilities shown.
+
+### 9. Live
 - SignalR client + recorder; token-gated positions/telemetry for local use only.
 
-### 9. Context sources
+### 10. Context sources
 - Pirelli nominations, FIA stewards' documents, Jolpica results.

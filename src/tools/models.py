@@ -15,6 +15,7 @@ class Session(_Record):
     country_name: str
     location: str
     circuit_short_name: str
+    circuit_key: int | None = None  # also MultiViewer's circuit id
     year: int
     date_start: str
     date_end: str | None = None
