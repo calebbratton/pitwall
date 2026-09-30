@@ -103,7 +103,23 @@ skips telemetry and an error path (ambiguous/future race) straight to `synthesiz
   full name (measured best; vocabulary lists got recited back). Segments failing Whisper's
   confidence gates are dropped.
   `radio` events go out immediately (`text` null unless cached); `radio_transcript` follows.
-- Try it: `python -m src.live --year 2026 --meeting Azerbaijan --speed 60 --from-lap 29`
+- **Live feed** (`client.py`): `LiveTimingClient` speaks SignalR Core (negotiate + cookies,
+  handshake, `Subscribe`, pings, jittered reconnect that re-subscribes) and yields the same
+  `Message`s as the archive; `Recorder` saves every session under `data/livetiming/recordings/`
+  in archive format (a recording replays via `ArchiveSession(<folder>, cache_dir=<root>)`).
+  Token topics (`Position.z`/`CarData.z`) only with `F1TV_SUBSCRIPTION_TOKEN` AND
+  `PITWALL_USE_F1TV_TOKEN=1`.
+- **One pipeline for live and replay:** `monitor.pump()` turns (message, quiet) into events;
+  `replay()` and the live runner both use it. Live sessions (`session.py`) are server-owned:
+  `POST /api/live/start` (or `PITWALL_LIVE_AUTOSTART=1`) runs the feed as a background task that
+  broadcasts to `GET /api/live/stream?live_id=` subscribers (late joiners get a catch-up);
+  `GET /api/live/current`. Replays via `/api/live/replay` create a session too (test source).
+- **In-race** (`src/sim/inrace.py`): "who wins from here" from the current state (recent pace,
+  effective in-race wear, tyre life, owed stops taken under a current SC/VSC, SC pit stops from
+  real gaps then the queue). Emitted as `prediction` events at each SC/VSC; the LIVE tab chat
+  (`POST /api/live/ask`, `src/agents/live_chat.py`) answers from it with one LLM call.
+- Try it: `python -m src.live --live` (live feed) or
+  `python -m src.live --year 2026 --meeting Azerbaijan --speed 60 --from-lap 29`
   (two safety cars) or `--year 2024 --meeting Miami --from-lap 26`. API: `GET /api/live/sessions`,
   `GET /api/live/replay?path=&speed=&from_lap=&transcribe=` (SSE; UI's LIVE tab).
 - Track map: `track.py` traces the circuit outline from the leader's `Position.z` path over lap 3

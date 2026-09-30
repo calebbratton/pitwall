@@ -226,3 +226,28 @@ def test_live_session_prediction_event_and_ask(monkeypatch):
             client.post("/api/live/ask", json={"live_id": "nope", "message": "x"}).status_code
             == 404
         )
+
+
+def test_live_feed_endpoints(monkeypatch, tmp_path):
+    from tests.test_live_client import FakeLiveClient
+
+    monkeypatch.setattr(
+        "src.livetiming.session.LiveTimingClient", lambda: FakeLiveClient(_race_with_laps())
+    )
+    monkeypatch.setattr("src.livetiming.session.recording_folder", lambda: tmp_path / "rec")
+
+    def make_graph():
+        return None, lambda: None
+
+    app = create_app(make_graph, make_transcriber=lambda: None, chat_model=Scripted([]))
+    with TestClient(app) as client:
+        assert client.get("/api/live/current").status_code == 404
+        started = client.post("/api/live/start").json()
+        assert started["source"] == "live" and started["recording"].endswith("rec")
+        live_id = started["live_id"]
+        events = _events(client.get("/api/live/stream", params={"live_id": live_id}).text)
+        kinds = [e for e, _ in events]
+        assert kinds[0] == "live" and kinds[-1] == "end" and "snapshot" in kinds
+        current = client.get("/api/live/current").json()
+        assert current["live_id"] == live_id and current["meeting"] == "Test GP"
+        assert client.get("/api/live/stream", params={"live_id": "nope"}).status_code == 404

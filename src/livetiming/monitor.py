@@ -257,36 +257,30 @@ class Transcriber(Protocol):
     async def transcribe(self, url: str, names: list[str] = ...) -> str | None: ...
 
 
-async def replay(
-    session: ArchiveSession,
-    speed: float = 10.0,
-    from_lap: int | None = None,
+async def pump(
+    source: AsyncIterator[tuple[Message, bool]],
+    monitor: RaceMonitor,
     snapshot_every_s: float = 1.0,
     transcriber: Transcriber | None = None,
     transcript_wait_s: float = 30.0,
     positions_every_s: float = 0.25,
-    circuit_loader: Callable[[list[Message]], Circuit | None] | None = None,
-    monitor: RaceMonitor | None = None,
     on_neutralisation: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
+    load_circuit_live: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Play an archived session as if live. Messages before `from_lap` are applied instantly
-    (their events are dropped, except `session`); afterwards the original timing is kept,
-    divided by `speed`. A `snapshot` event is emitted at most every `snapshot_every_s` of
-    wall-clock time, plus immediately after SC/VSC pit calls.
+    """Turn a stream of (message, quiet) into race events — shared by the live feed and the
+    replay, so live runs the code the replays test.
 
-    With a `transcriber`, each `radio` event carries its cached text or null; uncached clips are
-    transcribed in the background and delivered as `radio_transcript` events, so the race feed
-    never waits on speech recognition."""
-    # A caller-owned monitor lets a live session answer questions about the race state while
-    # this generator feeds it (the replay is just a test source for the live tooling).
-    if monitor is None:
-        monitor = RaceMonitor()
-    monitor._radio_base = f"{STATIC}/{session.path}"
-    load_circuit = circuit_loader or _circuit_for
-    fast_forward = from_lap is not None
-    previous: timedelta | None = None
+    `quiet` messages are applied without emitting events (replay fast-forward), except
+    `session`; when quiet ends a snapshot (and car positions) are sent straight away.
+    A `snapshot` is emitted at most every `snapshot_every_s` of wall-clock time, plus right
+    after SC/VSC pit calls. With a `transcriber`, `radio` events carry cached text or null and
+    uncached clips are transcribed in the background (`radio_transcript` events), so the race
+    feed never waits on speech recognition. `load_circuit_live` fetches circuit data (track map,
+    measured pit loss) once SessionInfo arrives — the replay precomputes it instead."""
     loop = asyncio.get_running_loop()
-    last_snapshot = 0.0
+    last_snapshot = last_positions = 0.0
+    was_quiet = False
+    circuit_done = not load_circuit_live
     transcripts: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     pending: set[asyncio.Task] = set()
 
@@ -314,35 +308,27 @@ async def replay(
             ready.append(transcripts.get_nowait())
         return ready
 
-    # Downloading/parsing the archive is blocking I/O; keep it off the event loop.
-    messages = await asyncio.to_thread(lambda: list(session.messages(REPLAY_TOPICS)))
-    circuit = await asyncio.to_thread(load_circuit, messages)
-    if circuit:
-        monitor.pit_loss = circuit.pit_loss
-        yield circuit.track_event()
-    elif outline := await asyncio.to_thread(track_outline, messages):
-        yield {"type": "track", "source": "traced", **outline}
-    last_positions = 0.0
     try:
-        for message in messages:
-            if fast_forward and (_lap_count(message) or 0) >= from_lap:
-                fast_forward = False
+        async for message, quiet in source:
+            if was_quiet and not quiet:
                 yield snapshot_event(monitor.snapshot())
                 if positions := monitor.positions_event():  # dots appear straight away
                     yield positions
-            if not fast_forward and previous is not None:
-                wait = (message.offset - previous).total_seconds() / speed
-                if wait > 0:
-                    await asyncio.sleep(min(wait, 5.0))  # cap long quiet gaps (e.g. red flags)
-            previous = message.offset
+            was_quiet = quiet
 
             events = monitor.feed(message)
-            if fast_forward:
-                events = [e for e in events if e["type"] == "session"]
+            if not circuit_done and message.topic == "SessionInfo":
+                circuit_done = True
+                circuit = await asyncio.to_thread(_circuit_for, [message])
+                if circuit:
+                    monitor.pit_loss = circuit.pit_loss
+                    events.insert(0, circuit.track_event())
+            if quiet:
+                events = [e for e in events if e["type"] in ("session", "track")]
             for event in events:
                 start_transcription(event)
                 yield event
-                if event["type"] == "pit_calls" and on_neutralisation and not fast_forward:
+                if event["type"] == "pit_calls" and on_neutralisation and not quiet:
                     extra = await asyncio.to_thread(on_neutralisation, monitor)
                     if extra:
                         yield extra
@@ -352,14 +338,14 @@ async def replay(
             now = loop.time()
             if (
                 message.topic == "Position.z"
-                and not fast_forward
+                and not quiet
                 and now - last_positions >= positions_every_s
                 and (positions := monitor.positions_event())
             ):
                 yield positions
                 last_positions = now
             pit_call_made = any(e["type"] == "pit_calls" for e in events)
-            if not fast_forward and (pit_call_made or now - last_snapshot >= snapshot_every_s):
+            if not quiet and (pit_call_made or now - last_snapshot >= snapshot_every_s):
                 yield snapshot_event(monitor.snapshot())
                 last_snapshot = now
 
@@ -372,3 +358,59 @@ async def replay(
     finally:
         for task in pending:
             task.cancel()
+
+
+async def replay(
+    session: ArchiveSession,
+    speed: float = 10.0,
+    from_lap: int | None = None,
+    snapshot_every_s: float = 1.0,
+    transcriber: Transcriber | None = None,
+    transcript_wait_s: float = 30.0,
+    positions_every_s: float = 0.25,
+    circuit_loader: Callable[[list[Message]], Circuit | None] | None = None,
+    monitor: RaceMonitor | None = None,
+    on_neutralisation: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Play an archived session as if live (a test source for the live tooling). Messages before
+    `from_lap` are applied instantly; afterwards the original timing is kept, divided by
+    `speed`. Event semantics are `pump`'s."""
+    # A caller-owned monitor lets a live session answer questions about the race state while
+    # this generator feeds it.
+    if monitor is None:
+        monitor = RaceMonitor()
+    monitor._radio_base = f"{STATIC}/{session.path}"
+    load_circuit = circuit_loader or _circuit_for
+
+    # Downloading/parsing the archive is blocking I/O; keep it off the event loop.
+    messages = await asyncio.to_thread(lambda: list(session.messages(REPLAY_TOPICS)))
+    circuit = await asyncio.to_thread(load_circuit, messages)
+    if circuit:
+        monitor.pit_loss = circuit.pit_loss
+        yield circuit.track_event()
+    elif outline := await asyncio.to_thread(track_outline, messages):
+        yield {"type": "track", "source": "traced", **outline}
+
+    async def timed() -> AsyncIterator[tuple[Message, bool]]:
+        fast_forward = from_lap is not None
+        previous: timedelta | None = None
+        for message in messages:
+            if fast_forward and (_lap_count(message) or 0) >= from_lap:
+                fast_forward = False
+            if not fast_forward and previous is not None:
+                wait = (message.offset - previous).total_seconds() / speed
+                if wait > 0:
+                    await asyncio.sleep(min(wait, 5.0))  # cap long quiet gaps (red flags)
+            previous = message.offset
+            yield message, fast_forward
+
+    async for event in pump(
+        timed(),
+        monitor,
+        snapshot_every_s=snapshot_every_s,
+        transcriber=transcriber,
+        transcript_wait_s=transcript_wait_s,
+        positions_every_s=positions_every_s,
+        on_neutralisation=on_neutralisation,
+    ):
+        yield event

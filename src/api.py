@@ -112,7 +112,10 @@ def create_app(
         app.state.transcriber = make_transcriber()
         app.state.sessions = SessionRegistry()
         app.state.chat_model = chat_model  # None -> the analyst model from the factory
+        if os.getenv("PITWALL_LIVE_AUTOSTART", "").strip() in ("1", "true", "yes"):
+            _start_live(app)  # race weekends: follow the live feed from server start
         yield
+        await app.state.sessions.stop_live()
         cleanup()
         if app.state.transcriber:
             await app.state.transcriber.aclose()
@@ -127,6 +130,10 @@ def create_app(
     app.get("/api/live/sessions")(live_sessions)
     app.get("/api/live/replay")(live_replay)
     app.post("/api/live/ask")(live_ask)
+    app.post("/api/live/start")(live_start)
+    app.post("/api/live/stop")(live_stop)
+    app.get("/api/live/current")(live_current)
+    app.get("/api/live/stream")(live_stream)
     return app
 
 
@@ -207,6 +214,60 @@ def live_replay(
             # Replays feed the session only while their stream is open (they're a test source);
             # the race state stays queryable afterwards. The live feed will run as a server task.
             session.finished = time.time()
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+    )
+
+
+def _start_live(app: FastAPI):
+    return app.state.sessions.start_live(
+        transcriber=app.state.transcriber, on_neutralisation=prediction_event
+    )
+
+
+def _describe(session) -> dict[str, Any]:
+    snap = session.monitor.snapshot()
+    return {
+        "live_id": session.live_id,
+        "source": session.source,
+        "connected": session.connected,
+        "recording": session.recording,
+        "meeting": snap.meeting,
+        "session": snap.session,
+        "lap": snap.current_lap,
+        "total_laps": snap.total_laps,
+        "status": snap.track_status,
+    }
+
+
+def live_start(request: Request) -> dict[str, Any]:
+    """Follow the live F1 timing feed (a server task; idempotent). Local tool: no auth."""
+    return _describe(_start_live(request.app))
+
+
+async def live_stop(request: Request) -> dict[str, str]:
+    await request.app.state.sessions.stop_live()
+    return {"status": "stopped"}
+
+
+def live_current(request: Request) -> dict[str, Any]:
+    """The live-feed session, if one is running (or finished recently)."""
+    session = request.app.state.sessions.current_live
+    if session is None:
+        raise HTTPException(404, "No live session. POST /api/live/start to follow the live feed.")
+    return _describe(session)
+
+
+def live_stream(request: Request, live_id: str) -> StreamingResponse:
+    """Subscribe to a live session (SSE): `live`, a catch-up of the current state, then events."""
+    session = request.app.state.sessions.get(live_id)
+    if session is None:
+        raise HTTPException(404, "That live session isn't running any more.")
+
+    async def events() -> AsyncIterator[str]:
+        async for event in session.subscribe():
+            yield _sse(event["type"], event)
 
     return StreamingResponse(
         events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
