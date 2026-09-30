@@ -181,11 +181,10 @@ def simulate_from(
     deg_now = np.array([state.deg.get(c.compound or "", 0.06) for c in cars])[None, :]
     age = np.tile(np.array([c.tyre_age for c in cars], dtype=float), (sims, 1))
 
-    if state.status in ("SAFETY_CAR", "RED_FLAG"):
-        T = np.tile(np.arange(n) * 0.8, (sims, 1))  # queue behind the SC / on the grid
-    else:
-        T = np.tile(np.array([c.gap_s for c in cars]), (sims, 1))
-    T = T + rng.normal(0, p.lap_noise, (sims, n))
+    # Start from the actual gaps: under an SC, cars stop as they reach the pit entry, before the
+    # queue has formed, so a leader who pits keeps the lead he had. The queue forms after lap 1.
+    T = np.tile(np.array([c.gap_s for c in cars]), (sims, 1)) + rng.normal(0, 0.1, (sims, n))
+    queue_after_first_lap = state.status in ("SAFETY_CAR", "RED_FLAG")
 
     # Remaining stop (at most one): owed compound, or tyres that can't reach the flag.
     must = np.array([c.owes_compound for c in cars])[None, :]
@@ -224,6 +223,12 @@ def simulate_from(
         deg = np.where(pit_now, new_deg, deg)
         life_now = np.where(pit_now, new_life, life_now)
         new_T = T + lap_time
+        if lap == 1 and queue_after_first_lap:
+            # Everyone lines up behind the SC in their order after the stops (0.8 s apart); no
+            # overtaking on this lap.
+            rank = np.argsort(np.argsort(new_T, axis=1), axis=1)
+            T = new_T.min(axis=1, keepdims=True) + rank * 0.8
+            continue
         traffic_step(new_T, lap_time, order, running, np.ones(sims, dtype=bool), p, rng)
         T = new_T
 
