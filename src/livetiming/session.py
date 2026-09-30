@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.livetiming.client import LiveTimingClient, Recorder, recording_folder
-from src.livetiming.monitor import RaceMonitor, pump, snapshot_event
+from src.livetiming.monitor import RaceMonitor, pump
 
 log = logging.getLogger(__name__)
 SESSION_TTL_S = 6 * 3600  # keep finished sessions around for post-race questions
@@ -74,7 +74,7 @@ class LiveSession:
                 {"type": "track_status", "status": snap.track_status, "lap": snap.current_lap}
             )
         if snap.drivers:
-            events.append(snapshot_event(snap))
+            events.append(self.monitor.snapshot_event())
         if positions := self.monitor.positions_event():
             events.append(positions)
         for kind in ("race_control", "radio", "radio_transcript", "pit_calls", "prediction"):

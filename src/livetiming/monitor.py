@@ -17,6 +17,7 @@ Events (dicts with a "type"):
 """
 
 import asyncio
+import statistics
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass
 from datetime import timedelta
@@ -24,6 +25,7 @@ from typing import Any, Protocol
 
 from src.livetiming.archive import STATIC, STRATEGY_TOPICS, ArchiveSession, Message
 from src.livetiming.circuits import Circuit, PitLoss, fetch_circuit
+from src.livetiming.rejoin import losses, rejoin_table
 from src.livetiming.snapshot import TRACK_STATUS, RaceSnapshot, build_snapshot
 from src.livetiming.state import TimingState
 from src.livetiming.strategy import pit_calls
@@ -33,7 +35,11 @@ NEUTRALISED = {"SAFETY_CAR", "VSC"}
 REPLAY_TOPICS = (*STRATEGY_TOPICS, "TeamRadio", "Position.z")
 
 
-def snapshot_event(snap: RaceSnapshot) -> dict[str, Any]:
+def snapshot_event(
+    snap: RaceSnapshot, pit_loss: PitLoss | None = None, lap_time_s: float | None = None
+) -> dict[str, Any]:
+    """`rejoin`: per running car, where it would come out if it pitted now (green / SC / VSC);
+    `lap_time_s`: a typical current green lap, for drawing the field on one line by gap."""
     return {
         "type": "snapshot",
         "lap": snap.current_lap,
@@ -58,6 +64,9 @@ def snapshot_event(snap: RaceSnapshot) -> dict[str, Any]:
             }
             for d in snap.drivers
         ],
+        "pit_loss": losses(pit_loss),
+        "lap_time_s": lap_time_s,
+        "rejoin": rejoin_table(snap, pit_loss),
     }
 
 
@@ -122,6 +131,19 @@ class RaceMonitor:
 
     def snapshot(self) -> RaceSnapshot:
         return build_snapshot(self.state)
+
+    def reference_lap_s(self) -> float | None:
+        """Median of each running car's latest clean green lap: the current lap time."""
+        latest = []
+        for laps in self.laps.values():
+            for lap in reversed(laps[-3:]):
+                if lap.time_s and not (lap.neutralised or lap.pit_in or lap.pit_out):
+                    latest.append(lap.time_s)
+                    break
+        return round(statistics.median(latest), 3) if len(latest) >= 5 else None
+
+    def snapshot_event(self) -> dict[str, Any]:
+        return snapshot_event(self.snapshot(), self.pit_loss, self.reference_lap_s())
 
     def starting_grid(self) -> dict[int, int]:
         """Official starting grid (car number -> slot, penalties applied) from TimingAppData
@@ -328,7 +350,7 @@ async def pump(
     try:
         async for message, quiet in source:
             if was_quiet and not quiet:
-                yield snapshot_event(monitor.snapshot())
+                yield monitor.snapshot_event()
                 if positions := monitor.positions_event():  # dots appear straight away
                     yield positions
             was_quiet = quiet
@@ -372,10 +394,10 @@ async def pump(
                 last_positions = now
             pit_call_made = any(e["type"] == "pit_calls" for e in events)
             if not quiet and (pit_call_made or now - last_snapshot >= snapshot_every_s):
-                yield snapshot_event(monitor.snapshot())
+                yield monitor.snapshot_event()
                 last_snapshot = now
 
-        yield snapshot_event(monitor.snapshot())
+        yield monitor.snapshot_event()
         if pending:  # let clips from the last laps finish, within reason
             await asyncio.wait(set(pending), timeout=transcript_wait_s)
         for event in drain():
