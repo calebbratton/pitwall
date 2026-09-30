@@ -285,7 +285,8 @@ def fit_tyre_model(
             raise ValueError("strategies not staggered enough for the panel model")
     model = fit_stint_model(laps, fuel_gain, fuel_uncertainty, seed)
     note = (
-        f"stint method: tyre ages on the same lap too similar (spread {age_spread(laps):.1f} "
+        f"stint method: tyre ages on the same lap too similar (spread "
+        f"{age_spread(_filtered(laps)):.1f} "
         f"laps < {MIN_AGE_SPREAD}); fuel gain assumed, track evolution not separated"
         if method == "auto"
         else ""
