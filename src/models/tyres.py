@@ -53,6 +53,9 @@ class TyreModel:
     compounds: dict[str, CompoundFit] = field(default_factory=dict)
     method: str = "stint"  # "panel" (whole field, lap effects) or "stint" (fuel prior)
     note: str = ""
+    # Panel method: how much faster/slower the track was on each lap for every car, relative to
+    # the first clean lap (fuel burn + rubber + weather combined). Empty for the stint method.
+    lap_effects: dict[int, float] = field(default_factory=dict)
 
     def lap_delta(self, compound: str, tyre_age: int) -> float | None:
         """Pace relative to a fresh reference-compound tyre (fuel excluded)."""
@@ -190,8 +193,9 @@ def age_spread(laps: list[CleanLap]) -> float:
 
 def _panel_coefficients(
     laps: list[CleanLap], drivers: list[str], compounds: list[str], reference: str
-) -> tuple[dict[str, float], dict[str, float]]:
-    lap_numbers = sorted({l.lap_number for l in laps})[1:]  # first lap is the baseline
+) -> tuple[dict[str, float], dict[str, float], dict[int, float]]:
+    all_laps = sorted({l.lap_number for l in laps})
+    lap_numbers = all_laps[1:]  # first lap is the baseline
     d_idx = {d: i for i, d in enumerate(drivers)}
     l_idx = {n: len(drivers) + i for i, n in enumerate(lap_numbers)}
     offset_compounds = [c for c in compounds if c != reference]
@@ -212,7 +216,8 @@ def _panel_coefficients(
     beta, *_ = np.linalg.lstsq(X, y, rcond=None)
     deg = {c: float(beta[s_idx[c]]) for c in compounds}
     offsets = {reference: 0.0} | {c: float(beta[o_idx[c]]) for c in offset_compounds}
-    return deg, offsets
+    lap_effects = {all_laps[0]: 0.0} | {n: float(beta[l_idx[n]]) for n in lap_numbers}
+    return deg, offsets, lap_effects
 
 
 def fit_panel_model(laps: list[CleanLap], seed: int = 0) -> TyreModel | None:
@@ -228,7 +233,7 @@ def fit_panel_model(laps: list[CleanLap], seed: int = 0) -> TyreModel | None:
     compounds = sorted(n_laps)
     reference = max(compounds, key=lambda c: n_laps[c])
     drivers = sorted({l.driver for l in laps})
-    deg, offsets = _panel_coefficients(laps, drivers, compounds, reference)
+    deg, offsets, lap_effects = _panel_coefficients(laps, drivers, compounds, reference)
 
     # Cluster bootstrap over drivers: resampled drivers become distinct "copies".
     by_driver: dict[str, list[CleanLap]] = defaultdict(list)
@@ -246,7 +251,7 @@ def fit_panel_model(laps: list[CleanLap], seed: int = 0) -> TyreModel | None:
         present = sorted({l.compound for l in sample})
         if reference not in present:
             continue
-        b_deg, b_off = _panel_coefficients(
+        b_deg, b_off, _ = _panel_coefficients(
             sample, sorted({l.driver for l in sample}), present, reference
         )
         for c in present:
@@ -265,7 +270,7 @@ def fit_panel_model(laps: list[CleanLap], seed: int = 0) -> TyreModel | None:
             n_stints=len(n_stints[c]),
             n_laps=n_laps[c],
         )
-    return TyreModel(None, reference, fits, method="panel")
+    return TyreModel(None, reference, fits, method="panel", lap_effects=lap_effects)
 
 
 def fit_tyre_model(
