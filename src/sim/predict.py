@@ -11,7 +11,7 @@ import argparse
 import json
 
 from src.sim.calibrate import DEFAULT_CALIBRATION, apply
-from src.sim.inputs import build_inputs
+from src.sim.inputs import _grid, build_inputs, penalised_grid, weekend_sessions
 from src.sim.race import simulate
 from src.warehouse.queries import connect
 
@@ -22,18 +22,45 @@ def main() -> None:
     ap.add_argument("--place", required=True)
     ap.add_argument("--laps", type=int, help="race distance (required before the race)")
     ap.add_argument("--sims", type=int, default=5000)
+    ap.add_argument(
+        "--penalty",
+        nargs="*",
+        default=[],
+        metavar="TLA=N",
+        help="grid-place penalties from the FIA documents, e.g. VER=10 HAM=5",
+    )
+    ap.add_argument("--pit-lane", nargs="*", default=[], metavar="TLA", help="pit-lane starters")
     ap.add_argument("--raw", action="store_true", help="uncalibrated simulator probabilities")
     ap.add_argument("--json", action="store_true", help="print JSON instead of a table")
     args = ap.parse_args()
 
-    inputs = build_inputs(connect(), args.year, args.place, laps=args.laps)
+    con = connect()
+    grid = None
+    if args.penalty or args.pit_lane:
+        base = build_inputs(con, args.year, args.place, laps=args.laps)
+        number = {d.tla: d.number for d in base.drivers}
+        unknown = [t for t in [p.split("=")[0] for p in args.penalty] + args.pit_lane if t.upper() not in number]
+        if unknown:
+            ap.error(f"unknown driver(s) {unknown}; choose from {sorted(number)}")
+        _, sessions = weekend_sessions(con, args.year, args.place)
+        grid = penalised_grid(
+            _grid(con, None, sessions.get("Qualifying")),
+            {number[t.upper()]: int(n) for t, n in (p.split("=") for p in args.penalty)},
+            {number[t.upper()] for t in args.pit_lane},
+        )
+    inputs = build_inputs(con, args.year, args.place, laps=args.laps, grid=grid)
     prediction = simulate(inputs, sims=args.sims)
     table = prediction.table()
     if not args.raw:
         table = apply(table, DEFAULT_CALIBRATION, args.sims)
     notes = list(inputs.notes)
-    if inputs.race_session_key is None:
-        notes.append("grid = qualifying order (grid penalties not applied)")
+    if grid:
+        notes.append(
+            "grid penalties applied: "
+            + ", ".join([*args.penalty, *(f"{t} pit lane" for t in args.pit_lane)])
+        )
+    elif inputs.race_session_key is None:
+        notes.append("grid = qualifying order (no penalties given: use --penalty / --pit-lane)")
     if args.laps:
         notes.append(f"race distance assumed: {args.laps} laps")
     missing_pace = [d.tla for d in inputs.drivers if d.quali_delta_s is None]

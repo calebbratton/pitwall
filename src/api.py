@@ -33,6 +33,7 @@ from src.llm.transcribe import RadioTranscriber
 from src.rag.index import RegulationIndex
 from src.seasons import out_of_scope_message, supported_seasons
 from src.sim.inrace import NotEnoughData
+from src.sim.prerace import grid_prediction_event
 from src.tools.openf1 import HttpOpenF1Client
 
 log = logging.getLogger(__name__)
@@ -205,6 +206,7 @@ def live_replay(
                 transcriber=transcriber,
                 monitor=session.monitor,
                 on_neutralisation=prediction_event,
+                on_grid=grid_prediction_event,
             ):
                 yield _sse(event["type"], event)
         except Exception as e:
@@ -222,7 +224,9 @@ def live_replay(
 
 def _start_live(app: FastAPI):
     return app.state.sessions.start_live(
-        transcriber=app.state.transcriber, on_neutralisation=prediction_event
+        transcriber=app.state.transcriber,
+        on_neutralisation=prediction_event,
+        on_grid=grid_prediction_event,
     )
 
 

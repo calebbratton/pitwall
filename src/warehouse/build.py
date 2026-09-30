@@ -7,6 +7,7 @@ Usage: python -m src.warehouse.build
 """
 
 import argparse
+import os
 from pathlib import Path
 
 import duckdb
@@ -131,7 +132,11 @@ def build(raw_dir: Path = RAW_DIR, db_path: Path = DB_PATH) -> dict[str, int]:
     recompute_derived(raw_dir)
     # All feed timestamps are UTC. read_json_auto drops the offset on some columns (naive
     # TIMESTAMP); without this, casting them back uses the machine's local zone and shifts them.
-    con = duckdb.connect(str(db_path))
+    # Built beside the live file and swapped in atomically: a running API (read-only
+    # connections) never sees a half-built warehouse.
+    tmp = db_path.with_name(db_path.name + ".building")
+    tmp.unlink(missing_ok=True)
+    con = duckdb.connect(str(tmp))
     con.execute("SET TimeZone = 'UTC'")
     try:
         for table in RAW_TABLES:
@@ -148,12 +153,14 @@ def build(raw_dir: Path = RAW_DIR, db_path: Path = DB_PATH) -> dict[str, int]:
                 con.execute(f"CREATE OR REPLACE TABLE raw_{table} ({schema})")
         con.execute(LAPS_SQL)
         con.execute(VIEWS_SQL)
-        return {
+        counts = {
             name: con.execute(f"SELECT count(*) FROM {name}").fetchone()[0]
             for name in ("races", "laps", "clean_laps", "raw_intervals")
         }
     finally:
         con.close()
+    os.replace(tmp, db_path)
+    return counts
 
 
 def main() -> None:

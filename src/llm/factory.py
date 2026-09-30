@@ -22,6 +22,9 @@ GROQ_DEFAULTS: dict[Role, str] = {
     "judge": "qwen/qwen3.8-27b",
 }
 DEFAULT_MAX_TOKENS = 4096  # reasoning tokens count toward this on reasoning models
+# Free-tier output-tokens-per-minute caps: Groq rejects (not queues) any request whose
+# max_tokens exceeds them, so requests are clamped under the cap.
+GROQ_OUTPUT_TPM = {"qwen/qwen3.8-27b": 1000}
 
 
 class LLMConfigError(RuntimeError):
@@ -34,10 +37,14 @@ def _env(name: str) -> str:
 
 
 def get_chat_model(
-    role: Role = "analyst", temperature: float = 0.0, max_tokens: int = DEFAULT_MAX_TOKENS
+    role: Role = "analyst",
+    temperature: float = 0.0,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    reasoning: bool = True,
 ) -> BaseChatModel:
     """Model for a graph role. Override per role with LLM_MODEL_<ROLE>, or all roles with
-    LLM_MODEL."""
+    LLM_MODEL. `reasoning=False` turns off hidden reasoning where the model supports it (saves
+    output tokens, which are the scarce budget on some free-tier models)."""
     provider = (_env("LLM_PROVIDER") or "groq").lower()
     model = _env(f"LLM_MODEL_{role.upper()}") or _env("LLM_MODEL")
 
@@ -53,6 +60,10 @@ def get_chat_model(
         if model.startswith("qwen/"):
             # Keep <think> text out of message content; "raw" is rejected with tool use.
             extra["reasoning_format"] = "parsed"
+            if not reasoning:
+                extra["reasoning_effort"] = "none"
+        if model in GROQ_OUTPUT_TPM:
+            max_tokens = min(max_tokens, GROQ_OUTPUT_TPM[model] - 50)
         return ChatGroq(model=model, temperature=temperature, max_tokens=max_tokens, **extra)
 
     if provider == "anthropic":

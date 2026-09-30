@@ -92,6 +92,39 @@ def _grid(con, race_sk: int | None, quali_sk: int | None) -> dict[int, int]:
     return dict(rows)
 
 
+def penalised_grid(
+    grid: dict[int, int], penalties: dict[int, int], pit_lane: set[int] = frozenset()
+) -> dict[int, int]:
+    """Apply grid-place penalties and pit-lane starts to a qualifying order (car -> slot).
+
+    Penalised cars drop N places from their qualifying slot (never below the last non-pit-lane
+    slot) and unpenalised cars move up to fill; pit-lane starters go to the back in qualifying
+    order. The FIA applies penalties in the order offences were committed, which only matters
+    when two penalised cars collide on the same slot (here: better qualifier first)."""
+    racing = sorted((n for n in grid if n not in pit_lane), key=grid.__getitem__)
+    last = len(racing)
+    penalised = sorted(
+        (n for n in racing if penalties.get(n, 0) > 0),
+        key=lambda n: (grid[n] + penalties[n], grid[n]),
+    )
+    taken: dict[int, int] = {}  # slot -> car
+    for n in penalised:
+        slot = min(grid[n] + penalties[n], last)
+        while slot in taken and slot < last:
+            slot += 1
+        if slot in taken:  # pushed past the back: the last free slot
+            slot = max(set(range(1, last + 1)) - taken.keys())
+        taken[slot] = n
+    free = iter(sorted(set(range(1, last + 1)) - taken.keys()))
+    for n in racing:
+        if n not in penalised:
+            taken[next(free)] = n
+    out = {n: slot for slot, n in taken.items()}
+    for i, n in enumerate(sorted((n for n in grid if n in pit_lane), key=grid.__getitem__)):
+        out[n] = last + 1 + i
+    return out
+
+
 def _quali_deltas(con, quali_sk: int | None) -> dict[int, float]:
     if quali_sk is None:
         return {}
@@ -259,10 +292,12 @@ def build_inputs(
     laps: int | None = None,
     long_run_level: str = "driver",
     sprint_weight: float = SPRINT_WEIGHT,
+    grid: dict[int, int] | None = None,
 ) -> WeekendInputs:
     """`long_run_level`: "driver" (each driver's own long runs) or "team" (both cars' average,
     less sensitive to one driver's fuel load / programme). `sprint_weight`: how much a sprint's
-    race pace counts relative to a practice long run."""
+    race pace counts relative to a practice long run. `grid` (car number -> slot) overrides the
+    starting grid, e.g. the official one from the live feed or `penalised_grid`."""
     meeting_key, sessions = weekend_sessions(con, year, place)
     race_sk = sessions.get("Race")
     quali_sk = sessions.get("Qualifying")
@@ -286,7 +321,7 @@ def build_inputs(
     if missing:
         notes.append(f"default degradation used for {', '.join(missing)}")
 
-    grid = _grid(con, race_sk, quali_sk)
+    grid = grid or _grid(con, race_sk, quali_sk)
     quali = _quali_deltas(con, quali_sk)
     long_run = _long_run_deltas(pace_sessions, laps_by_session, deg)
     names = _drivers(con, [sk for sk in sessions.values()])

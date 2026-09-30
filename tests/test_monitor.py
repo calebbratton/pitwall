@@ -174,3 +174,35 @@ def test_replay_transcribes_new_clips_in_background_and_uses_cache():
     assert transcriber.calls == [(base + "TeamRadio/new.mp3", ["Lando Norris"])]
     kinds = [e["type"] for e in events]
     assert kinds.index("radio_transcript") > kinds.index("radio") and kinds[-1] == "end"
+
+
+def _grid_messages(session_name: str = "Race") -> list[Message]:
+    lines = {
+        str(n): {"RacingNumber": str(n), "GridPos": str(i + 1)} for i, n in enumerate(range(1, 13))
+    }
+    return [
+        _msg(0, "SessionInfo", {"Name": session_name, "Meeting": {"Name": "Test GP"}}),
+        _msg(1, "LapCount", {"CurrentLap": 1, "TotalLaps": 50}),
+        _msg(8, "TimingAppData", {"Lines": lines}),
+        _msg(9, "TimingAppData", {"Lines": {"1": {"Stints": [{"Compound": "SOFT"}]}}}),
+        _msg(100, "LapCount", {"CurrentLap": 2}),
+    ]
+
+
+def test_on_grid_fires_once_with_the_official_grid():
+    calls = []
+
+    def on_grid(monitor):
+        calls.append(monitor.starting_grid())
+        return {"type": "prediction", "lap": 0}
+
+    async def collect(messages):
+        return [e async for e in replay(FakeSession(messages), speed=1e6, on_grid=on_grid)]
+
+    events = asyncio.run(collect(_grid_messages()))
+    assert len(calls) == 1 and calls[0][1] == 1 and calls[0][12] == 12
+    assert [e for e in events if e["type"] == "prediction"] == [{"type": "prediction", "lap": 0}]
+
+    calls.clear()
+    asyncio.run(collect(_grid_messages("Qualifying")))
+    assert calls == []

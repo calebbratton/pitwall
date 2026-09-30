@@ -123,6 +123,19 @@ class RaceMonitor:
     def snapshot(self) -> RaceSnapshot:
         return build_snapshot(self.state)
 
+    def starting_grid(self) -> dict[int, int]:
+        """Official starting grid (car number -> slot, penalties applied) from TimingAppData
+        GridPos: published when the race feed opens, about an hour before the start. Empty
+        until most of the field has one, or outside a race."""
+        if "race" not in str(self.state.topics.get("SessionInfo", {}).get("Name", "")).lower():
+            return {}
+        grid = {}
+        for number, line in self.state.topics.get("TimingAppData", {}).get("Lines", {}).items():
+            pos = line.get("GridPos") if isinstance(line, dict) else None
+            if str(pos or "").isdigit() and int(pos) > 0 and str(number).isdigit():
+                grid[int(number)] = int(pos)
+        return grid if len(grid) >= 10 else {}
+
     def feed(self, message: Message) -> list[dict[str, Any]]:
         if message.topic == "Position.z":
             # High-frequency and huge: kept out of TimingState; the caller throttles emission.
@@ -266,6 +279,7 @@ async def pump(
     positions_every_s: float = 0.25,
     on_neutralisation: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
     load_circuit_live: bool = False,
+    on_grid: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Turn a stream of (message, quiet) into race events — shared by the live feed and the
     replay, so live runs the code the replays test.
@@ -276,11 +290,14 @@ async def pump(
     after SC/VSC pit calls. With a `transcriber`, `radio` events carry cached text or null and
     uncached clips are transcribed in the background (`radio_transcript` events), so the race
     feed never waits on speech recognition. `load_circuit_live` fetches circuit data (track map,
-    measured pit loss) once SessionInfo arrives — the replay precomputes it instead."""
+    measured pit loss) once SessionInfo arrives — the replay precomputes it instead.
+    `on_grid` runs once when the official starting grid is known (before lap 1), e.g. for a
+    pre-race prediction from the real grid."""
     loop = asyncio.get_running_loop()
     last_snapshot = last_positions = 0.0
     was_quiet = False
     circuit_done = not load_circuit_live
+    grid_done = on_grid is None
     transcripts: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     pending: set[asyncio.Task] = set()
 
@@ -334,6 +351,15 @@ async def pump(
                         yield extra
             for event in drain():
                 yield event
+            if (
+                not grid_done
+                and message.topic in ("TimingAppData", "LapCount")
+                and monitor.starting_grid()
+            ):
+                grid_done = True
+                before_start = (monitor.snapshot().current_lap or 0) <= 1
+                if before_start and (extra := await asyncio.to_thread(on_grid, monitor)):
+                    yield extra
 
             now = loop.time()
             if (
@@ -371,6 +397,7 @@ async def replay(
     circuit_loader: Callable[[list[Message]], Circuit | None] | None = None,
     monitor: RaceMonitor | None = None,
     on_neutralisation: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
+    on_grid: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Play an archived session as if live (a test source for the live tooling). Messages before
     `from_lap` are applied instantly; afterwards the original timing is kept, divided by
@@ -412,5 +439,6 @@ async def replay(
         transcript_wait_s=transcript_wait_s,
         positions_every_s=positions_every_s,
         on_neutralisation=on_neutralisation,
+        on_grid=on_grid,
     ):
         yield event

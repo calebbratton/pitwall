@@ -185,7 +185,8 @@ python scripts/record_fixtures.py --year 2024 --place Monaco --drivers 4 81 16
 python -m src.chat --trace            # chat in the terminal (uses Groq)
 uvicorn src.api:app --reload --port 8000  # API for pitwall-ui
 pytest tests --ignore=tests/evals      # fast, offline
-pytest tests/evals                     # benchmark suite, calls the LLM
+python -m src.evals.run                # benchmark: route / retrieval precision / faithfulness (Qwen judge)
+PITWALL_EVALS=1 pytest tests/evals     # same, as regression floors (calls the LLM)
 ```
 
 ## Environment variables

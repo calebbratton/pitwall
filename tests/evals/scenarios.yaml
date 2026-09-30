@@ -1,0 +1,104 @@
+# Benchmark scenarios for the post-race chat graph (python -m src.evals.run).
+#
+# relevant: article prefixes of the 2026 Sporting Regulations (issue 8) that answer the
+# question, checked by hand against data/regs/chunks.jsonl. A retrieved clause counts as
+# relevant if its article starts with one of them ("B5.12" covers all VSC clauses).
+# Omit `relevant` when the answer doesn't depend on the regulations (retrieval isn't scored).
+# mode: the route the router should pick.
+
+- id: vsc-pit
+  mode: rules
+  question: Is a driver allowed to make a pit stop while the virtual safety car is deployed?
+  relevant: [B5.12.3]
+
+- id: vsc-delta
+  mode: rules
+  question: What do drivers have to do with their speed under a VSC?
+  relevant: [B5.12.2]
+
+- id: sc-lapped-cars
+  mode: rules
+  question: When are lapped cars allowed to overtake behind the safety car?
+  relevant: [B5.13.4]
+
+- id: sc-pit-lane
+  mode: rules
+  question: Can the race director send the whole field through the pit lane behind the safety car?
+  relevant: [B5.13.3]
+
+- id: red-flag-work
+  mode: rules
+  question: During a red flag, what work can teams do on the cars and can they change tyres?
+  relevant: [B5.14.4]
+
+- id: red-flag-tire-spelling
+  mode: rules
+  question: can they swap tires when the race is red flagged
+  relevant: [B5.14.4]
+
+- id: two-compounds
+  mode: rules
+  question: Does every driver have to use two different tyre compounds in a dry race?
+  relevant: [B6.3.6]
+
+- id: two-compounds-wet
+  mode: rules
+  question: If a driver runs intermediates in the race, do they still need two dry compounds?
+  relevant: [B6.3.6]
+
+- id: tyre-allocation
+  mode: rules
+  question: How many sets of dry-weather tyres does each driver get at a standard format weekend?
+  relevant: [B6.3.4, B6.3.8]
+
+- id: sprint-grid
+  mode: rules
+  question: How is the starting grid for the sprint decided?
+  relevant: [B2.2, B2.3.4]
+
+- id: pu-penalty
+  mode: rules
+  question: What grid penalty does a driver get for using an extra power unit element?
+  relevant: [B8.2.8]
+
+- id: overtake-mode
+  mode: rules
+  question: When can drivers use the Overtake energy boost?
+  relevant: [B7.2]
+
+- id: unsafe-release
+  mode: rules
+  question: What are the rules about releasing a car from a pit stop safely?
+  relevant: [B1.6.2]
+
+- id: race-classification
+  mode: rules
+  question: How much of the race distance does a driver need to complete to be classified?
+  relevant: [B2.5.5]
+
+- id: madrid-vsc
+  mode: race
+  question: Who gained and who lost from the virtual safety car at Madrid 2026?
+  relevant: [B5.12]
+
+- id: monza-winner-strategy
+  mode: race
+  question: What tyre strategy did the winner use at Monza 2026?
+
+- id: baku-sc-pits
+  mode: race
+  question: Which drivers pitted under the safety car at Baku 2026, and did it pay off?
+  relevant: [B5.13]
+
+- id: silverstone-stints
+  mode: race
+  question: Compare Norris and Piastri's stint lengths at Silverstone 2026.
+
+- id: spa-verstappen-stops
+  mode: race
+  question: How many pit stops did Verstappen make at Spa 2026 and on which laps?
+
+- id: monaco-compounds
+  mode: race
+  question: Did everyone at Monaco 2026 meet the two-compound rule?
+  relevant: [B6.3.6]

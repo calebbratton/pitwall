@@ -51,6 +51,12 @@ and rules, `docs/ROADMAP.md` for phases, `docs/SIMULATION.md` for the simulator 
    faithfulness + retrieval precision, Qwen on Groq as judge); then a regulations reranker, Bayesian
    tyre priors (PyMC/NumPyro), radio → structured events, live anomaly detection, LightGBM
    rival pit model, tracing (Langfuse/LangSmith), voice, vision.
+4b. **Historical predictor study (ROADMAP §4c):** ingest 2023–2025 all sessions (started
+   2026-09-30: `python -m src.warehouse.ingest --years 2025 2024 2023 --sessions Race
+   Qualifying "Practice 1" "Practice 2" "Practice 3" Sprint "Sprint Qualifying" "Sprint
+   Shootout"`, resumable; then `python -m src.warehouse.build`), rank predictors with
+   forward-chaining per season, settle the 2026 model; then rain scenarios, grid penalties,
+   strategy engine, like-track overtaking.
 5. Later: rejoin predictor / undercut check, rival pit-timing model (north star).
 6. After those: **season chat mode + like-track priors** (roadmap §9b). Track-fit analysis is
    built as a CLI: `python -m src.analysis.track_fit --team McLaren`.

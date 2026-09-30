@@ -107,6 +107,23 @@ data makes the simulation accurate, and the LLM explains results rather than jud
 - **Radio → structured signals**: small LLM extraction of events ("tyres gone", damage, "box")
   from transcripts, used as model inputs.
 
+### 4c. Learn the model's structure from 2023–2025, fit 2026 (user decision, 2026-09-30)
+2026 alone is 15 races: too few to tell which predictors matter. Ground-effect seasons
+2023–2025 (~70 weekends, OpenF1; 2022 isn't on OpenF1 and F1's 2022 archive index is not public)
+decide **which predictors and functional forms** to use; 2026 data then sets the magnitudes
+(team pace), with history as shrinkage priors where 2026 is thin.
+- Candidates: qualifying gap, grid, practice long runs (driver/team), sprint pace, rolling team
+  form, driver race-vs-qualifying tendency, circuit type (overtaking, low drag), weather, tyre
+  wear by C-number, lap-1 gains, grid penalties.
+- Car-independent mechanics fitted on history: pit loss, SC/VSC hazard per circuit,
+  overtaking difficulty per circuit, lap-1 position changes, tyre-curve shapes.
+- Protocol: forward-chaining (predict each race from earlier races only), luck-adjusted
+  targets, and a predictor must help **in each of 2023, 2024 and 2025 separately** to count.
+  Then it must still improve 2026 out of sample, or it's dropped.
+- Internal only: users still see the current and previous season.
+- Then, in order: rain scenarios (forecast-driven), grid penalties, strategy engine (per-car
+  optimal stops from tyre curves + pit loss instead of random windows), like-track overtaking.
+
 ### 5. Monte Carlo decisions
 - Options × ~1,000 simulations with common random numbers; expected points/position + risk.
 - Replaces the rule-of-thumb pit calls; continuous green-flag pit windows; VSC-specific timing

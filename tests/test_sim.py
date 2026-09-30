@@ -123,3 +123,17 @@ def test_calibration_flattens_and_keeps_totals():
         for t, w in zip("ABCDE", p_win, strict=True)
     ]
     assert apply(table, Calibration(), sims=10**9)[0]["p_win"] == pytest.approx(0.9, abs=1e-3)
+
+
+def test_penalised_grid():
+    from src.sim.inputs import penalised_grid
+
+    quali = {n: n for n in range(1, 21)}  # car n qualified P n
+    g = penalised_grid(quali, {1: 10})
+    assert g[1] == 11 and g[2] == 1 and g[11] == 10 and g[12] == 12
+    g = penalised_grid(quali, {19: 10, 20: 5})  # can't drop below the back
+    assert sorted(g.values()) == list(range(1, 21)) and {g[19], g[20]} == {19, 20}
+    g = penalised_grid(quali, {1: 10, 2: 9}, pit_lane={3})
+    assert g[1] == 11 and g[2] == 12  # same target: better qualifier first, the other next
+    assert g[3] == 20 and g[4] == 1
+    assert sorted(g.values()) == list(range(1, 21))
