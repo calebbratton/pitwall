@@ -45,6 +45,36 @@ def _write(table: str, session_key: int, rows: list[dict], raw_dir: Path) -> Non
     tmp.replace(path)  # atomic: a half-written session never looks complete
 
 
+def _windows(session_key: int, race_control: list[dict], laps: list[dict]) -> list[dict]:
+    """SC / VSC / red-flag windows, derived with the same code the live tools use."""
+    windows = neutralised_windows(
+        [RaceControlMessage.model_validate(r) for r in race_control],
+        [Lap.model_validate(r) for r in laps],
+    )
+    return [
+        {"session_key": session_key, "start": s.isoformat(), "end": e.isoformat(), "kind": k}
+        for s, e, k in windows
+    ]
+
+
+def _read(raw_dir: Path, table: str, session_key: int) -> list[dict]:
+    path = raw_dir / table / f"{session_key}.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def recompute_derived(raw_dir: Path = RAW_DIR) -> int:
+    """Re-derive the neutralised windows for every ingested session from its stored race control
+    and laps, so detection fixes apply to past sessions without re-downloading."""
+    count = 0
+    for path in sorted((raw_dir / "sessions").glob("*.jsonl")):
+        sk = int(path.stem)
+
+        race_control, laps = (_read(raw_dir, table, sk) for table in ("race_control", "laps"))
+        _write("neutralised", sk, _windows(sk, race_control, laps), raw_dir)
+        count += 1
+    return count
+
+
 def ingest_session(client: OpenF1Client, session: dict, raw_dir: Path = RAW_DIR) -> None:
     sk = session["session_key"]
     fetched: dict[str, list[dict]] = {}
@@ -52,16 +82,9 @@ def ingest_session(client: OpenF1Client, session: dict, raw_dir: Path = RAW_DIR)
         params: Params = {"session_key": sk}
         fetched[table] = client._fetch(endpoint, params)
 
-    # Derived in Python (shared with the live tools): SC / VSC / red flag windows.
-    laps = [Lap.model_validate(r) for r in fetched["laps"]]
-    messages = [RaceControlMessage.model_validate(r) for r in fetched["race_control"]]
-    windows = [
-        {"session_key": sk, "start": s.isoformat(), "end": e.isoformat(), "kind": k}
-        for s, e, k in neutralised_windows(messages, laps)
-    ]
     for table, rows in fetched.items():
         _write(table, sk, rows, raw_dir)
-    _write("neutralised", sk, windows, raw_dir)
+    _write("neutralised", sk, _windows(sk, fetched["race_control"], fetched["laps"]), raw_dir)
     _write("sessions", sk, [session], raw_dir)  # written last: marks the session complete
 
 

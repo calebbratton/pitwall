@@ -55,18 +55,27 @@ def neutralised_windows(messages: list[RaceControlMessage], laps: list[Lap]) -> 
     lap_starts = sorted(_dt(lap.date_start) for lap in laps if lap.date_start)
     windows: list[Window] = []
     open_since: dict[str, datetime] = {}
+
+    def close(kind: str, at: datetime) -> None:
+        if kind in open_since:
+            windows.append((open_since.pop(kind), at, kind))
+
     for m in sorted(messages, key=lambda m: m.date):
-        text, when = m.message.upper(), _dt(m.date)
-        if "VIRTUAL SAFETY CAR DEPLOYED" in text:
+        # 2026 race control writes "VSC DEPLOYED"; earlier seasons "VIRTUAL SAFETY CAR ...".
+        text = m.message.upper().replace("VIRTUAL SAFETY CAR", "VSC")
+        when = _dt(m.date)
+        if "VSC DEPLOYED" in text:
             open_since["VSC"] = when
-        elif "VIRTUAL SAFETY CAR ENDING" in text and "VSC" in open_since:
-            windows.append((open_since.pop("VSC"), when + timedelta(seconds=VSC_TAIL_S), "VSC"))
+        elif "VSC ENDING" in text:
+            close("VSC", when + timedelta(seconds=VSC_TAIL_S))
         elif "SAFETY CAR DEPLOYED" in text:
+            close("VSC", when)  # a VSC upgraded to a full SC never announces its ending
             open_since["SC"] = when
-        elif "SAFETY CAR IN THIS LAP" in text and "SC" in open_since:
-            tail = timedelta(seconds=typical * SC_TAIL_LAPS)
-            windows.append((open_since.pop("SC"), when + tail, "SC"))
+        elif "SAFETY CAR IN THIS LAP" in text:
+            close("SC", when + timedelta(seconds=typical * SC_TAIL_LAPS))
         elif m.flag == "RED":
+            close("VSC", when)  # red flags end any neutralisation already running
+            close("SC", when)
             # Until the end of the first lap after the restart (a standing/rolling start).
             restart = next((t for t in lap_starts if t > when), None)
             end = restart + timedelta(seconds=typical * 1.5) if restart else when

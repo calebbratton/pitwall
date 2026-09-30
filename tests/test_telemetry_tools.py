@@ -113,3 +113,33 @@ def test_neutralised_laps_excluded_from_pace():
     # SC out during lap 10, in at the end of lap 12: laps 10-12 and the restart lap 13 are
     # excluded (lap 1 always is).
     assert kept == [2, 3, 4, 5, 6, 7, 8, 9, 14, 15, 16, 17, 18, 19, 20]
+
+
+def test_2026_vsc_wording_and_vsc_upgraded_to_sc():
+    from datetime import UTC, datetime, timedelta
+
+    from src.tools.models import RaceControlMessage
+    from src.tools.telemetry import neutralised_windows
+
+    t0 = datetime(2026, 9, 13, 13, tzinfo=UTC)
+
+    def msg(minutes, text):
+        return RaceControlMessage(
+            date=(t0 + timedelta(minutes=minutes)).isoformat(), category="SafetyCar", message=text
+        )
+
+    kinds = [w[2] for w in neutralised_windows([msg(0, "VSC DEPLOYED"), msg(2, "VSC ENDING")], [])]
+    assert kinds == ["VSC"]
+    upgraded = neutralised_windows(
+        [
+            msg(10, "VSC DEPLOYED"),
+            msg(11, "SAFETY CAR DEPLOYED"),
+            msg(15, "SAFETY CAR IN THIS LAP"),
+        ],
+        [],
+    )
+    vsc, sc = upgraded
+    assert vsc[2] == "VSC" and vsc[1] == t0 + timedelta(
+        minutes=11
+    )  # closed by the SC, not open forever
+    assert sc[2] == "SC"

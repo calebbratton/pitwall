@@ -24,6 +24,7 @@ def db(tmp_path_factory):
     counts = build(raw_dir=tmp / "raw", db_path=tmp / "w.duckdb")
     assert counts["races"] == 8 and counts["laps"] == 234
     con = duckdb.connect(str(tmp / "w.duckdb"), read_only=True)
+    con.execute("SET TimeZone = 'UTC'")
     yield con
     con.close()
 

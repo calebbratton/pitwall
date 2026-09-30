@@ -9,7 +9,9 @@ from src.warehouse.build import DB_PATH
 
 
 def connect(db_path: Path = DB_PATH) -> duckdb.DuckDBPyConnection:
-    return duckdb.connect(str(db_path), read_only=True)
+    con = duckdb.connect(str(db_path), read_only=True)
+    con.execute("SET TimeZone = 'UTC'")  # feed timestamps are UTC; see build.py
+    return con
 
 
 def find_session(con, year: int, place: str, session_name: str = "Race") -> int:

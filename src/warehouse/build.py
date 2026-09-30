@@ -11,7 +11,7 @@ from pathlib import Path
 
 import duckdb
 
-from src.warehouse.ingest import RAW_DIR
+from src.warehouse.ingest import RAW_DIR, recompute_derived
 
 DB_PATH = Path("data/warehouse/pitwall.duckdb")
 
@@ -128,7 +128,11 @@ FROM raw_sessions;
 
 def build(raw_dir: Path = RAW_DIR, db_path: Path = DB_PATH) -> dict[str, int]:
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    recompute_derived(raw_dir)
+    # All feed timestamps are UTC. read_json_auto drops the offset on some columns (naive
+    # TIMESTAMP); without this, casting them back uses the machine's local zone and shifts them.
     con = duckdb.connect(str(db_path))
+    con.execute("SET TimeZone = 'UTC'")
     try:
         for table in RAW_TABLES:
             files = sorted((raw_dir / table).glob("*.jsonl"))
