@@ -3,6 +3,32 @@
 Goal: use every publicly available data source to inform strategy calls — weather, tyres and
 degradation, driving style, race state — live and in post-race review.
 
+## North star: predict rivals' strategy, then beat it
+
+"If I'm managing Red Bull, when will McLaren stop — and when should we go to undercut them?"
+Everything below builds toward this:
+
+1. **Rival pit-timing model** — for every rival, every lap: P(pits this lap). A per-lap
+   ("discrete-time hazard") model: each lap of each 2026 race is one pit-or-stay decision, so a
+   season gives thousands of examples even though there are only ~15 races. Features:
+   - tyre state: compound, age, measured degradation vs the stint's start, laps remaining,
+     whether the second compound is still owed
+   - threats: gap to the car behind/ahead vs pit loss (undercut exposure), traffic at pit exit
+   - race state: SC/VSC, rain, rivals who just pitted (covering behaviour)
+   - team tendencies: per-team effects learned from 2026 (e.g. reacts to undercuts within a lap,
+     double-stacks under SC, stops early vs extends) — shrunk toward the field average when
+     a team has little data
+   - live signals: radio ("box", "tyres are gone"), pit-lane readiness where public
+2. **Reaction model** — P(rival covers | we pit), from 2026 undercut attempts: the difference
+   between "they'll stop on lap 22" and "they'll stop the lap after we do".
+3. **Counter-strategy search** — simulate our candidate pit laps against the rival's predicted
+   (and reactive) behaviour; pick the lap that maximises P(we come out ahead) / expected points.
+   UI: "UNDERCUT ON NOR: box lap 21 → 64% ahead after their stop; they cover within 1 lap 40% of
+   the time".
+4. **Validation** — predict rivals' actual pit laps in held-out 2026 races (log-loss,
+   calibration, error in laps) against a baseline of "median stint length for that compound";
+   backtest counter-strategy calls against what happened.
+
 ## Guiding principles
 
 1. **Same weekend > same season > older seasons.** 2026 changed power units, aero, chassis and
@@ -67,8 +93,8 @@ data makes the simulation accurate, and the LLM explains results rather than jud
 - Traffic/overtaking model per circuit, dirty air, SC/VSC mechanics, rules.
 
 ### 4b. Opponents, incidents and 2026 specifics
-- **Rival response model**: per-team 2026 tendencies from the warehouse (cover undercuts? SC
-  reaction time? double stacks?) — rivals simulated as likely responses, not fixed plans.
+- **Rival pit-timing and reaction models** (see North star): rivals simulated as likely,
+  reactive behaviour, not fixed plans.
 - **SC/VSC hazard per circuit and lap** (lap 1, restarts, street circuits) from 2024–2026.
 - **2026 energy/overtaking**: battery-deployment signatures from speed traps / CarData feed the
   overtaking model.
@@ -91,6 +117,12 @@ data makes the simulation accurate, and the LLM explains results rather than jud
   that the tool's analysis should agree with.
 
 ### 7. Weather
+- Finding (2026 races, per-lap track effects from the panel fit): a per-lap trend (fuel +
+  rubber, −0.02…−0.09 s/lap) explains 80–95 % of track evolution; within-race track temperature
+  adds ~nothing and its apparent effects are implausible/confounded (temperature moves with the
+  lap count). So: evolution comes from the race's own lap effects live; weather adjustments
+  only for big swings (clouds, 8–10 °C) and rain (rubber reset); estimate a pooled s/°C across
+  races and weekend sessions (FP/Q/race at different temperatures) rather than per race.
 - Rain radar nowcasting + crossover-lap model for intermediates.
 - Live `WeatherData`; Open-Meteo forecast → rain probability as a simulator input
   (crossover/intermediate calls); track-temperature effect on degradation.
