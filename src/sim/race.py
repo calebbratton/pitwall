@@ -31,10 +31,11 @@ class SimParams:
     # Team race-vs-quali bias: tuned to 0 against luck-adjusted results (it was partly SC luck).
     form_weight: float = 0.0
     form_full_after: int = 5  # races of history for full weight (shrinks toward 0 before)
-    # Weight on the team's race pace in earlier races (DriverInput.team_pace_s). 2023-26: 0.25-0.5
-    # improves the predicted order every season (rank corr +0.006..+0.05) but worsens calibrated
-    # winner log-loss in 2024-26 (1.176 -> 1.192 overall at 0.25), so it's off by default.
-    team_pace_weight: float = 0.0
+    # Weight on the team's race pace in earlier races (DriverInput.team_pace_s, recency-weighted,
+    # half-life 3 races). 2023-26 calibrated winner log-loss 1.176 -> 1.123: better in the
+    # wide-spread seasons (2023, 2026 = year one of new regs), slightly worse once the field
+    # converged (2024-25). Revisit as the 2026 regs mature (user: fields converge year on year).
+    team_pace_weight: float = 0.5
     missing_pace_per_grid_slot: float = 0.1  # s/lap per grid slot when a car has no pace data
     lap_noise: float = 0.35  # s, lap-to-lap variation
     # s, lap-1 shuffle. Tuned to 2.0 (grid edge): it also absorbs race randomness the model
