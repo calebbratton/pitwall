@@ -233,7 +233,7 @@ class RaceMonitor:
             else:
                 self._neutralised_now = False
         if message.topic == "TimingData":
-            self._record_laps(message.data)
+            events.extend(self._record_laps(message.data))
 
         if not self._session_sent and "SessionInfo" in topics and "LapCount" in topics:
             snap = self.snapshot()
@@ -296,7 +296,10 @@ class RaceMonitor:
                 )
         return events
 
-    def _record_laps(self, update: dict) -> None:
+    def _record_laps(self, update: dict) -> list[dict[str, Any]]:
+        """Append each car's newly completed lap to `laps`; returns `lap` events."""
+        events: list[dict[str, Any]] = []
+        drivers = self.state.topics.get("DriverList", {})
         lines = self.state.topics.get("TimingData", {}).get("Lines", {})
         app = self.state.topics.get("TimingAppData", {}).get("Lines", {})
         for car, change in (update.get("Lines") or {}).items():
@@ -310,20 +313,46 @@ class RaceMonitor:
             stints = [s for s in (app.get(car, {}).get("Stints") or []) if s.get("Compound")]
             current = stints[-1] if stints else {}
             pitted = self._in_pit_this_lap.pop(car, False)
-            self.laps.setdefault(car, []).append(
-                LapRecord(
-                    lap=int(change["NumberOfLaps"]),
-                    time_s=_lap_seconds((line.get("LastLapTime") or {}).get("Value")),
-                    compound=current.get("Compound"),
-                    tyre_age=current.get("TotalLaps"),
-                    stint=len(stints),
-                    pit_in=bool(line.get("InPit")) or pitted,
-                    pit_out=bool(line.get("PitOut")),
-                    neutralised=self._neutralised_since_lap.get(car, False)
-                    or getattr(self, "_neutralised_now", False),
-                )
+            last = line.get("LastLapTime") or {}
+            history = self.laps.get(car) or []
+            # A stop touches two laps (in the pit lane at the end of one and the start of the
+            # next): the second of two pit laps in a row is the out-lap.
+            out_lap = bool(line.get("PitOut")) or (pitted and bool(history) and history[-1].pit_in)
+            record = LapRecord(
+                lap=int(change["NumberOfLaps"]),
+                time_s=_lap_seconds((line.get("LastLapTime") or {}).get("Value")),
+                compound=current.get("Compound"),
+                tyre_age=current.get("TotalLaps"),
+                stint=len(stints),
+                # lap 1: cars on the grid read as "in pit" before the start
+                pit_in=(bool(line.get("InPit")) or pitted)
+                and not out_lap
+                and int(change["NumberOfLaps"]) > 1,
+                pit_out=out_lap,
+                neutralised=self._neutralised_since_lap.get(car, False)
+                or getattr(self, "_neutralised_now", False),
             )
+            self.laps.setdefault(car, []).append(record)
             self._neutralised_since_lap[car] = getattr(self, "_neutralised_now", False)
+            if record.lap < 1:  # the grid state before the start, not a lap
+                continue
+            events.append(
+                {
+                    "type": "lap",
+                    "number": car,
+                    "tla": drivers.get(car, {}).get("Tla", car),
+                    "lap": record.lap,
+                    "time": round(record.time_s, 3) if record.time_s else None,
+                    "compound": record.compound,
+                    "tyre_age": record.tyre_age,
+                    "pit_in": record.pit_in,
+                    "pit_out": record.pit_out,
+                    "neutralised": record.neutralised,
+                    "personal_best": bool(last.get("PersonalFastest")),
+                    "overall_best": bool(last.get("OverallFastest")),
+                }
+            )
+        return events
 
     def driver_names(self, number: str) -> list[str]:
         """The driver's full name, to prime speech recognition with the right spelling."""
@@ -427,7 +456,8 @@ async def pump(
                 if forecast := await asyncio.to_thread(forecast_event, message.data):
                     events.append(forecast)
             if quiet:
-                events = [e for e in events if e["type"] in ("session", "track")]
+                # Lap history still flows during fast-forward: the run timeline shows every lap.
+                events = [e for e in events if e["type"] in ("session", "track", "lap")]
             for event in events:
                 start_transcription(event)
                 yield event

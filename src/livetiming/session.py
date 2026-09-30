@@ -44,6 +44,7 @@ class LiveSession:
             "race_control": deque(maxlen=60),
             "radio": deque(maxlen=40),
             "radio_transcript": deque(maxlen=40),
+            "lap": deque(maxlen=2500),  # every car's laps, for the run timeline
         }
     )
 
@@ -81,7 +82,7 @@ class LiveSession:
             events.append(self.monitor.snapshot_event())
         if positions := self.monitor.positions_event():
             events.append(positions)
-        for kind in ("race_control", "radio", "radio_transcript", "pit_calls", "prediction"):
+        for kind in ("lap", "race_control", "radio", "radio_transcript", "pit_calls", "prediction"):
             events.extend(self._recent[kind])
         return events
 

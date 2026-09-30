@@ -44,7 +44,8 @@ def _race_start() -> list[Message]:
 
 
 def _types(events):
-    return [e["type"] for e in events]
+    """Event types, without the per-lap history events (tested separately)."""
+    return [e["type"] for e in events if e["type"] != "lap"]
 
 
 def test_monitor_emits_session_status_race_control_and_pit_calls_on_safety_car():
@@ -226,3 +227,45 @@ def test_weather_event_and_session_start():
         {"StartDate": "2026-06-07T14:00:00", "GmtOffset": "-04:00:00"}
     ) == datetime(2026, 6, 7, 18, 0, tzinfo=UTC)
     assert forecast_event(info) is None  # forecasts are blocked in tests: no event, no crash
+
+
+def test_lap_events_carry_the_lap_history():
+    monitor = RaceMonitor()
+    events = []
+    for m in [
+        *_race_start(),
+        _msg(
+            90,
+            "TimingData",
+            {
+                "Lines": {
+                    "4": {
+                        "NumberOfLaps": 1,
+                        "LastLapTime": {
+                            "Value": "1:32.500",
+                            "PersonalFastest": True,
+                            "OverallFastest": True,
+                        },
+                    }
+                }
+            },
+        ),
+    ]:
+        events += monitor.feed(m)
+    laps = [e for e in events if e["type"] == "lap"]
+    assert laps == [
+        {
+            "type": "lap",
+            "number": "4",
+            "tla": "NOR",
+            "lap": 1,
+            "time": 92.5,
+            "compound": "MEDIUM",
+            "tyre_age": 0,
+            "pit_in": False,
+            "pit_out": False,
+            "neutralised": False,
+            "personal_best": True,
+            "overall_best": True,
+        }
+    ]
