@@ -248,6 +248,26 @@ def review(year: int, meeting: str, driver: str, lap: int, sims: int = 4000) -> 
                 p_worse_than_actual=round(float((pos > actual_pos).mean()), 3),
             )
         )
+    # Context: rivals near the driver who stopped under a SC/VSC just before this decision - the
+    # cheap stop the driver didn't get (Madrid 2026: everyone but Norris pitted under the VSC).
+    context = []
+    my_gap = car.gap_s
+    for other in state.cars:
+        if other.number == number or abs(other.gap_s - my_gap) > loss[0] + 5:
+            continue
+        for in_lap, _ in stops.get(other.number, []):
+            rec = next((r for r in full.laps.get(other.number, []) if r.lap == in_lap), None)
+            if rec and rec.neutralised and lap - 3 <= in_lap < lap:
+                context.append(other.tla)
+    if context:
+        saving = loss[0] - loss[1]
+        context_note = (
+            f"{', '.join(context)} stopped under a SC/VSC in the 3 laps before {tla}'s stop "
+            f"(about {saving:.0f} s cheaper than {tla}'s green-flag stop): the cost came from "
+            "the neutralisation's timing, not from this decision"
+        )
+    else:
+        context_note = ""
     best = min(branches, key=lambda b: b.expected)
     actual = branches[0]
     margin = actual.expected - best.expected
@@ -272,6 +292,7 @@ def review(year: int, meeting: str, driver: str, lap: int, sims: int = 4000) -> 
         notes=[
             f"state at the leader's lap {decision_lap}, {remaining} laps to go, track {state.status}",
             *([pit_note] if pit_note else []),
+            *([context_note] if context_note else []),
             "rivals stop when they really did (hindsight); tyre numbers measured over the whole race",
             *state.notes,
         ],

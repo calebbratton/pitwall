@@ -143,3 +143,9 @@ def test_2026_vsc_wording_and_vsc_upgraded_to_sc():
         minutes=11
     )  # closed by the SC, not open forever
     assert sc[2] == "SC"
+
+
+def test_review_pit_stop_lists_stops_without_a_lap(tools):
+    out = json.loads(tools["review_pit_stop"].invoke({"driver": "LEC"}))
+    assert out["driver"] == "LEC" and isinstance(out["pitted_on_laps"], list)
+    assert tools["review_pit_stop"].invoke({"driver": "Brabham"}).startswith("ERROR")

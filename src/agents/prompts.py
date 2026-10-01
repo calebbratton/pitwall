@@ -36,6 +36,10 @@ For questions comparing teams or the whole field, the summary is usually enough:
 without calling tools. Otherwise fetch only what the question needs: list_drivers for a team,
 get_pace_summary per driver per stint for degradation, get_lap_times for short windows around
 laps the question names (a team means both drivers).
+For "was pitting / stopping right?" or "should they have stayed out?" questions about a specific
+stop, call review_pit_stop with the driver and the lap they pitted (get the lap from the race
+summary or get_tyre_stints, or call it without a lap to list their stops). Its verdict and
+options are simulated from measured data - report them, don't redo the reasoning.
 """
 
 ANALYST = """\

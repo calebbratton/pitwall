@@ -335,4 +335,57 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
             return _json(rows[:MAX_RACE_CONTROL_MESSAGES] + [note])
         return _json(rows)
 
-    return [list_drivers, get_tyre_stints, get_lap_times, get_pace_summary, get_race_control]
+    @tool
+    def review_pit_stop(driver: str, lap: int | None = None) -> str:
+        """Was this pit stop the right call? Replays the race to the moment the driver entered
+        the pits and simulates the alternatives (pit that lap, stay out 1-5 more laps, no more
+        stops) with tyre wear, fresh-tyre gain and pit loss measured in this race; rivals stop
+        when they really did. Give the driver and the lap they pitted (their in-lap). Without a
+        lap, returns the laps they pitted on. Takes ~20-60 s."""
+        d = resolve(driver)
+        if isinstance(d, str):
+            return d
+        stops = [
+            s.lap_end
+            for s in client.get_stints(sk)
+            if s.driver_number == d.driver_number and s.lap_end is not None
+        ]
+        stops = sorted(stops)[:-1]  # the last stint ends at the flag, not in the pits
+        if lap is None:
+            return _json({"driver": d.name_acronym, "pitted_on_laps": stops})
+        try:
+            from src.sim.pit_review import review
+
+            r = review(session.year, session.location, d.name_acronym, int(lap), sims=1500)
+        except Exception as e:  # noqa: BLE001 - errors go back to the model
+            return f"ERROR: {type(e).__name__}: {e}. Laps {d.name_acronym} pitted on: {stops}"
+        return _json(
+            {
+                "driver": r.driver,
+                "lap": r.lap,
+                "track_status_at_decision": r.status,
+                "tyres": f"{r.old_compound} ({r.old_tyre_age} laps) -> {r.new_compound}",
+                "measured": r.measured,
+                "options": [
+                    {
+                        "option": b.label,
+                        "expected_position": b.expected,
+                        "p_win": b.p_win,
+                        "p_podium": b.p_podium,
+                        "p_better_than_actual": b.p_better_than_actual,
+                    }
+                    for b in r.branches
+                ],
+                "verdict": r.verdict,
+                "notes": r.notes,
+            }
+        )
+
+    return [
+        list_drivers,
+        get_tyre_stints,
+        get_lap_times,
+        get_pace_summary,
+        get_race_control,
+        review_pit_stop,
+    ]
