@@ -92,6 +92,12 @@ LLM phrasing, UI panel.
   2024; calibrated winner log-loss worse at every threshold (1.084 off vs 1.102-1.139). Off.
 - Conclusion: the pre-race finishing order is near its ceiling with public data; model effort
   goes to in-race/strategy models next (rival pit-timing hazard = the north star).
+- Rival pit-timing hazard v1 (src/sim/pit_hazard.py, `python -m src.sim.pit_hazard`): P(pit this
+  lap) from 92,656 car-laps 2023-26 (2,822 stops), logistic, leave-one-race-out log-loss 0.119
+  vs 0.136 constant / 0.134 tyre-age-only, better every season (2026 smallest: 0.146 vs 0.150).
+  Calibrated to ~30% per lap / ~35% within 3 laps; overconfident above (rare). Interaction terms
+  and Platt scaling didn't help. Not yet used by alerts. Next idea: gradient boosting or team
+  tendencies (some teams react to rivals' stops), per-team intercepts.
 
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
