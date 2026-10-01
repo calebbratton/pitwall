@@ -25,7 +25,8 @@ and rules, `docs/ROADMAP.md` for phases, `docs/SIMULATION.md` for the simulator 
 
 ## This weekend: Kuala Lumpur (C2/C3/C4)
 - FP1 Fri 2 Oct 04:30 UTC · FP2 08:00 · FP3 Sat 04:30 · **Quali Sat 08:00** · **Race Sun 4 Oct 07:00**.
-- Run the server following the live feed: `PITWALL_LIVE_AUTOSTART=1 uvicorn src.api:app --port 8000`
+- Run the server following the live feed: `PITWALL_LIVE_AUTOSTART=1 uvicorn src.api:app --port 8000 --timeout-graceful-shutdown 5`
+  (without the timeout a restart can hang: uvicorn waits for the UI's open live stream to close)
   (or `POST /api/live/start`) — it's running like this now. Open http://localhost:5173 → LIVE. Terminal view: `python -m src.live --live`. Recordings land in
   `data/livetiming/recordings/` — each session becomes a test fixture.
 - After quali: ingest + predict:
