@@ -132,7 +132,10 @@ src/sim/battles.py + src/livetiming/director.py: learned P(pass within 5 laps) /
 within 3 laps) for every close pair (2023-26, leave-one-race-out pass log-loss 0.314 vs 0.380
 gap-only; calibrated). Each lap the live server emits a director pick ("watch HAM's onboard")
 shown at the top of Strategy calls, plus a battle alert when the top battle changes with a pass
->= 50% likely (Baku 2026 replay: 1 such alert; picks every lap). Recommend-only: F1 TV terms
+>= 60% likely. Notify vs actual overtake (`python -m src.livetiming.director`, 38 races
+2025-26, leave-one-race-out): 7.5 alerts/race, 75% followed by that pass within 5 laps (median 1
+lap's notice), 10% of all on-track passes flagged. Live alerts resolve to passed / no pass; the UI
+has opt-in browser notifications (battle, SC call, undercut). Recommend-only: F1 TV terms
 9.2(d)/(k) rule out automating its player (checked 2026-10-01).
 
 ## Next (in order)

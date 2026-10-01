@@ -63,3 +63,37 @@ def test_director_picks_close_pair_and_alerts_once(monkeypatch):
     assert len(pick["battles"]) == 1  # CCC is 19 s back: not a battle
     assert [e["kind"] for e in events if e["type"] == "alert"] == ["battle"]
     assert not [e for e in director.on_lap(monitor) if e["type"] == "alert"]  # same battle: once
+
+
+def test_alerted_battle_resolves_when_the_pass_happens(monkeypatch):
+    monkeypatch.setattr("src.sim.battles.models", lambda: (Fixed(0.9), Fixed(0.9)))
+    monkeypatch.setattr("src.livetiming.director._circuit_rel", lambda snap, fn: 1.0)
+    monitor = RaceMonitor()
+    lines = {
+        "1": {"Position": "1", "GapToLeader": "LAP 10", "NumberOfLaps": 9},
+        "2": {
+            "Position": "2",
+            "GapToLeader": "+0.8",
+            "IntervalToPositionAhead": {"Value": "+0.8"},
+            "NumberOfLaps": 9,
+        },
+    }
+    for m in [
+        msg(0, "SessionInfo", {"Name": "Race", "Type": "Race", "Meeting": {"Name": "Test GP"}}),
+        msg(0, "TrackStatus", {"Status": "1"}),
+        msg(1, "DriverList", {"1": {"Tla": "AAA"}, "2": {"Tla": "BBB"}}),
+        msg(1, "LapCount", {"CurrentLap": 10, "TotalLaps": 50}),
+        msg(1, "TimingData", {"Lines": lines}),
+    ]:
+        monitor.feed(m)
+    director = Director()
+    assert any(e.get("kind") == "battle" for e in director.on_lap(monitor))
+    # BBB gets past on the next lap
+    monitor.feed(msg(90, "TimingData", {"Lines": {"2": {"Position": "1"}, "1": {"Position": "2"}}}))
+    monitor.feed(msg(91, "LapCount", {"CurrentLap": 11}))
+    resolved = [e for e in director.on_lap(monitor) if e.get("status") == "resolved"]
+    assert (
+        resolved
+        and resolved[0]["outcome"] == "worked"
+        and "BBB passed AAA" in resolved[0]["detail"]
+    )
