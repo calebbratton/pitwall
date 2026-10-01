@@ -43,6 +43,7 @@ FEATURES = (
     "raining",
     *(f"compound_{c.lower()}" for c in COMPOUNDS),
     "regs_2026",
+    "track_deg",  # circuit's tyre wear vs the season norm (from its other races), s/lap per lap
 )
 LIVE_FEATURES = tuple(f for f in FEATURES if f != "teammate_pitting_now")
 BASELINE = ("age", "age_sq", "first_stint", "race_fraction")
@@ -65,9 +66,17 @@ def load(years: tuple[int, ...] = (2023, 2024, 2025, 2026)) -> Rows:
             AND year IN ({",".join("?" * len(years))}) ORDER BY date_start""",
         list(years),
     ).fetchall()
+    from src.models.tyre_curves import circuit_deg_offset
+
+    circuit = dict(
+        con.execute(
+            "SELECT session_key, circuit_key FROM races WHERE session_name = 'Race'"
+        ).fetchall()
+    )
     X, y, race_idx, names, car = [], [], [], [], []
     for ri, (sk, year, loc) in enumerate(races):
         names.append((year, loc))
+        track_deg = circuit_deg_offset(circuit.get(sk), exclude=(sk,))
         rows = con.execute(
             """SELECT l.driver_number, l.lap_number, l.position, coalesce(l.pit_in, false),
                       l.stint, l.compound, l.tyre_age, coalesce(l.neutralised, ''),
@@ -130,6 +139,7 @@ def load(years: tuple[int, ...] = (2023, 2024, 2025, 2026)) -> Rows:
                     "raining": float(bool(r[9])),
                     **{f"compound_{c.lower()}": float(r[5] == c) for c in COMPOUNDS},
                     "regs_2026": float(year >= 2026),
+                    "track_deg": track_deg,
                 }
 
                 X.append([feats[f] for f in FEATURES])
@@ -287,7 +297,11 @@ if __name__ == "__main__":
 
 
 def future_hazards(
-    snapshot, monitor, blend: "Blend | None" = None, feature_set: tuple[str, ...] = LIVE_FEATURES
+    snapshot,
+    monitor,
+    blend: "Blend | None" = None,
+    feature_set: tuple[str, ...] = LIVE_FEATURES,
+    track_deg: float = 0.0,
 ) -> dict[str, np.ndarray]:
     """Per running car: P(pits at the end of lap k) for k = 1..laps remaining, if it hasn't
     stopped by then - from the live state, with tyre age and race fraction rolled forward and
@@ -346,6 +360,7 @@ def future_hazards(
                 "raining": float(raining),
                 **{f"compound_{c.lower()}": float(d.compound == c) for c in COMPOUNDS},
                 "regs_2026": float((snapshot.year or 0) >= 2026),
+                "track_deg": track_deg,
             }
             rows.append([f[name] for name in feature_set])
         out[d.number] = blend.predict(np.array(rows, dtype=float))
