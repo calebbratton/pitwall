@@ -194,3 +194,54 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+DEG_SHRINK_RACES = 2  # pseudo-races at "average wear" in the per-circuit offset
+
+
+@functools.cache
+def _race_deg_rel() -> list[tuple[int, int | None, int, float]]:
+    """(year, circuit_key, race session_key, mean of per-compound degradation minus that
+    season's median for the compound) for every warehouse race: how hard the track is on tyres
+    beyond the compound choice. Fuel-corrected stint fits, dry compounds."""
+    from src.models.tyres import CleanLap, fit_tyre_model
+
+    con = connect()
+    try:
+        races = con.execute(
+            "SELECT session_key, year, circuit_key FROM races WHERE session_name = 'Race'"
+        ).fetchall()
+        fitted = []
+        for sk, year, ck in races:
+            rows = con.execute(
+                """SELECT driver_number::VARCHAR, stint, compound, lap_number, tyre_age, lap_time
+                   FROM clean_laps WHERE session_key = ? AND tyre_age IS NOT NULL
+                     AND compound IN ('SOFT', 'MEDIUM', 'HARD')""",
+                [sk],
+            ).fetchall()
+            if len(rows) < 200:
+                continue
+            fits = fit_tyre_model([CleanLap(*r) for r in rows], method="stint").compounds
+            degs = {c: f.deg_s_per_lap for c, f in fits.items() if f.n_stints >= 4}
+            if degs:
+                fitted.append((year, ck, sk, degs))
+    finally:
+        con.close()
+    by_season: dict[tuple[int, str], list[float]] = {}
+    for year, _, _, degs in fitted:
+        for c, d in degs.items():
+            by_season.setdefault((year, c), []).append(d)
+    median = {k: float(np.median(v)) for k, v in by_season.items()}
+    return [
+        (year, ck, sk, float(np.mean([d - median[(year, c)] for c, d in degs.items()])))
+        for year, ck, sk, degs in fitted
+    ]
+
+
+def circuit_deg_offset(circuit_key: int | None, exclude: tuple[int, ...] = ()) -> float:
+    """Extra seconds lost per lap of tyre age at this circuit vs the season norm, from its other
+    races (2023 onwards), shrunk toward 0. 0 for circuits with no history."""
+    if circuit_key is None:
+        return 0.0
+    mine = [rel for _, ck, sk, rel in _race_deg_rel() if ck == circuit_key and sk not in exclude]
+    return sum(mine) / (len(mine) + DEG_SHRINK_RACES)

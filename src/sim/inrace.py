@@ -123,6 +123,7 @@ def race_state(
     curves: dict | None = None,
     compound_offsets: bool = False,
     age_curves: bool = False,
+    deg_offset: float = 0.0,
 ) -> RaceState:
     """`curves`: season tyre-age curves by C-number (src/models/tyre_curves.py). When given,
     each car's tyre life is how far its compound is proven to go without dropping off in the
@@ -182,7 +183,10 @@ def race_state(
         for label in ("SOFT", "MEDIUM", "HARD"):
             curve = curves.get(c_number(snapshot.year, snapshot.location, label) or "")
             if curve:
-                age_loss[label] = loss_by_age(curve, MAX_TRACKED_AGE)
+                # + this circuit's wear beyond the season norm (tyre_curves.circuit_deg_offset)
+                age_loss[label] = [
+                    v + deg_offset * a for a, v in enumerate(loss_by_age(curve, MAX_TRACKED_AGE))
+                ]
 
     def age_term(compound: str | None, age: int) -> float:
         table = age_loss.get(compound or "")

@@ -103,6 +103,12 @@ LLM phrasing, UI panel.
   without the test race): no gain (calibrated winner log-loss 1.348 vs 1.322 uniform). Off; the
   hazard's value is answering "who pits next" directly (chat / alerts), not the win odds.
 
+## Provenance note (2026-10-01)
+Values typed in from Claude's general knowledge, not from a feed: reference/circuit_coords.json,
+and Sepang's 5.543 km / 15 corners used in the like-track comparison (2026-09-30 chat). After
+FP1: trace Sepang's outline from the archive's Position.z (or MultiViewer circuit 12) and use
+measured length/corners; use the weekend's practice for tyre wear rather than borrowing Shanghai.
+
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.
