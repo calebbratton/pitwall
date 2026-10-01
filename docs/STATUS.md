@@ -87,6 +87,11 @@ LLM phrasing, UI panel.
   ~1.5x, but single seasons are noisy). In the pre-race sim: no gain on 2025-26 (log-loss
   1.018 vs 1.017-1.019, rank corr flat) - the sim rarely passes anyway. Kept off; the rates
   remain for like-track work.
+- Compromised qualifying (build_inputs(compromised_threshold=...)): segment-matched teammate
+  comparison flags ~1.5 drivers/race. 2023-26 at 4000 sims: order better in 2023/2026, worse in
+  2024; calibrated winner log-loss worse at every threshold (1.084 off vs 1.102-1.139). Off.
+- Conclusion: the pre-race finishing order is near its ceiling with public data; model effort
+  goes to in-race/strategy models next (rival pit-timing hazard = the north star).
 
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
