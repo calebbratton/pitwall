@@ -56,6 +56,9 @@ class LiveSession:
     def publish(self, event: dict[str, Any]) -> None:
         kind = event.get("type", "")
         if kind == "alert":  # updated in place: keep the latest version of each
+            previous = self._alerts.get(event.get("id", ""), {})
+            if previous.get("text") and not event.get("text"):
+                event = {**event, "text": previous["text"]}  # keep the LLM line across updates
             self._alerts[event.get("id", "")] = event
         elif kind in self._recent:
             self._recent[kind].append(event)

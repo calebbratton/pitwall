@@ -35,3 +35,9 @@ def no_weather_forecasts(monkeypatch):
 def no_real_prediction_log(monkeypatch, tmp_path):
     """The locked-in prediction log (predictions/) is a record; tests write to a temp folder."""
     monkeypatch.setattr("src.sim.prediction_log.PREDICTIONS", tmp_path / "predictions")
+
+
+@pytest.fixture(autouse=True)
+def no_alert_llm(monkeypatch):
+    """Alert phrasing calls a real LLM; tests use the templates."""
+    monkeypatch.setenv("PITWALL_ALERT_LLM", "0")

@@ -438,6 +438,21 @@ async def pump(
     transcripts: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     pending: set[asyncio.Task] = set()
 
+    async def write_alert(alert: dict[str, Any]) -> None:
+        from src.agents.alert_writer import phrase
+
+        text = await asyncio.to_thread(phrase, alert)
+        if text:
+            await transcripts.put({**alert, "text": text})
+
+    def start_writing(alert: dict[str, Any]) -> None:
+        from src.agents.alert_writer import enabled
+
+        if enabled():
+            task = asyncio.create_task(write_alert(alert))
+            pending.add(task)
+            task.add_done_callback(pending.discard)
+
     async def transcribe(radio: dict[str, Any]) -> None:
         text = await transcriber.transcribe(radio["url"], monitor.driver_names(radio["driver"]))
         if text is not None:
@@ -496,6 +511,7 @@ async def pump(
                     if e["type"] == "pit_calls":
                         report = pit_calls(monitor.snapshot(), monitor.pit_loss)
                         for alert in engine.on_pit_calls(report):
+                            start_writing(alert)
                             yield alert
                 if message.topic == "LapCount":
                     lap = monitor.snapshot().current_lap
@@ -512,6 +528,7 @@ async def pump(
                             log.exception("alert engine failed on lap %s", lap)
                             new = []
                         for alert in new:
+                            start_writing(alert)
                             yield alert
             if (
                 not q3_done
