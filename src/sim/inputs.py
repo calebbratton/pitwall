@@ -339,9 +339,10 @@ def _race_minus_quali(con, race_sk: int, quali_sk: int) -> dict[str, float]:
 
 
 RACE_PACE_SHRINK = 2  # pseudo-races of "no gap" in the running mean
-# races; None = plain season mean. 3 races: the front converges within a season (2026: top-two
-# gap 0.53% -> 0.15%), and recency-weighting fixed the overrated early leaders.
-RACE_PACE_HALF_LIFE: float | None = 3.0
+# races; None = plain season mean. 1.5 (2026-10-01 sweep, 85 races x 4000 sims, with weight
+# 0.5): calibrated winner log-loss 1.065 vs 1.164 at half-life 3 / weight 0.25, better in every
+# season (2026 1.31 vs 1.45) - fast-developing fields need the last race or two, not five.
+RACE_PACE_HALF_LIFE: float | None = 1.5
 
 
 def season_race_pace(

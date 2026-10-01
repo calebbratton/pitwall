@@ -117,6 +117,14 @@ feed's official grid). Score with `python -m src.sim.scorecard`. Race distance b
 comes from reference/race_laps_<year>.json (KL 56 - unverified) or last year's race. After each
 race weekend: commit the new predictions/ files, then run the scorecard once the race is ingested.
 
+## Recent form tuned (2026-10-01)
+Sweep half-life {1.5,3,5} x race-pace weight {0.25,0.5} over 85 races (4000 sims): half-life 1.5
++ weight 0.5 best calibrated (winner log-loss 1.065 vs 1.164, better every season, 2026 1.31 vs
+1.45). Field-spread-dependent calibration: no gain on top. Late-2024 replay (14 races): grid stage
+5/14 winners vs pole 4/14, pre-Q3 3/14 (it lagged McLaren's rise - fixed in spirit by the faster
+recency). Next test: qualifying "ideal lap" (sum of best sectors) vs best lap - user idea about
+2026 deployment tuning / tyre windows.
+
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.

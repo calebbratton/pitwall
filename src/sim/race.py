@@ -32,10 +32,10 @@ class SimParams:
     form_weight: float = 0.0
     form_full_after: int = 5  # races of history for full weight (shrinks toward 0 before)
     # Weight on the driver's race pace in earlier races (DriverInput.race_pace_s, recency-weighted,
-    # half-life 3 races). 2023-26 (85 races, 4000 sims x 3 seeds): 0.25 picks 58 winners (pole:
-    # 52, none: ~56), calibrated winner log-loss 1.085 (none: 1.159); 0.5 calibrates slightly
-    # better (1.074) but picks 55. Revisit as the 2026 regs mature (fields converge yearly).
-    race_pace_weight: float = 0.25
+    # half-life 1.5 races). 2026-10-01 sweep (85 races, 4000 sims): weight 0.5 with half-life 1.5
+    # beat 0.25 with half-life 3 on calibrated winner log-loss in every season (1.065 vs 1.164);
+    # winner picks 58 vs 59 (noise). Field-spread-dependent calibration added nothing on top.
+    race_pace_weight: float = 0.5
     missing_pace_per_grid_slot: float = 0.1  # s/lap per grid slot when a car has no pace data
     lap_noise: float = 0.35  # s, lap-to-lap variation
     # s, lap-1 shuffle. Tuned to 2.0 (grid edge): it also absorbs race randomness the model

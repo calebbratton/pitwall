@@ -40,10 +40,9 @@ class Calibration:
     points: float = 1.0
 
 
-# Fitted on 2026 (15 races, luck-adjusted, leave-one-race-out). With the driver's recency-
-# weighted race pace (2026-09-30): winner log-loss 1.60 raw -> 1.40 calibrated, podium
-# 0.295 -> 0.240, points 0.734 -> 0.418. The raw simulator is overconfident, most of all deep
-# in the field.
+# Fitted on 2026 (15 races, luck-adjusted, leave-one-race-out). With the driver's recent race
+# pace (half-life 1.5, weight 0.5; 2026-10-01): winner log-loss 1.57 raw -> 1.35 calibrated,
+# podium 0.319 -> 0.257, points 0.710 -> 0.417.
 DEFAULT_CALIBRATION = Calibration(win=1.8, podium=2.2, points=4.0)
 
 
