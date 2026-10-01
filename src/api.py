@@ -9,6 +9,7 @@ POST /api/chat {"thread_id": str | null, "message": str} -> text/event-stream:
   event: error   {"message"}
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -135,6 +136,7 @@ def create_app(
     app.post("/api/live/stop")(live_stop)
     app.get("/api/live/current")(live_current)
     app.get("/api/live/stream")(live_stream)
+    app.get("/api/race/verdicts")(race_verdicts)
     return app
 
 
@@ -221,6 +223,18 @@ def live_replay(
     return StreamingResponse(
         events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
     )
+
+
+async def race_verdicts(year: int, place: str) -> dict[str, Any]:
+    """Post-race strategy verdicts for the top finishers' stops (src/sim/verdicts.py; cached,
+    the first call for a race replays it and can take a few minutes)."""
+    from src.sim.verdicts import verdicts
+
+    try:
+        found = await asyncio.to_thread(verdicts, year, place)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"year": year, "place": place, "verdicts": found}
 
 
 def _start_live(app: FastAPI):
