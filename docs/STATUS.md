@@ -146,8 +146,11 @@ has opt-in browser notifications (battle, SC call, undercut). Recommend-only: F1
   distribution - covered (pit review uses rivals' real stops; the learned undercut model
   learns real responses; hazard-drawn rival stops in the in-race sim tested, no gain);
   (3) realistic pre-race strategy - deprioritised (pre-race order is near its ceiling).
-- Next product items: "your call" mode, post-race verdict cards, phone notifications (ntfy or
-  an installable web app - user's call, text would go through a third party with ntfy).
+- Done: "your call" mode (UI), post-race verdict cards (`python -m src.sim.verdicts`,
+  `GET /api/race/verdicts`, `GET /api/race/list`, UI REVIEW tab; first load of a race takes
+  minutes, then cached in data/verdicts/).
+- Next product item: phone notifications (ntfy or an installable web app - user's call, text
+  would go through a third party with ntfy).
 
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
