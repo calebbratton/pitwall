@@ -29,6 +29,9 @@ from src.sim.inrace import NotEnoughData, RaceState, StopPlan, race_state, simul
 
 log = logging.getLogger(__name__)
 
+# Off until the undercut model beats the base rate on real attempts (undercut_attempts():
+# 2026, 72 attempts, Brier 0.234 vs 0.217 for "32% every time").
+UNDERCUT_ALERTS = False
 UNDERCUT_MAX_GAP_S = 4.0  # beyond this a fresh-tyre out-lap can't close it
 UNDERCUT_MIN_P = 0.6
 UNDERCUT_MIN_GAIN = 0.2  # vs letting the car ahead stop first
@@ -116,6 +119,8 @@ class AlertEngine:
         events = self._resolve(snap, monitor)
         if snap.track_status != "GREEN" or not snap.is_race:
             self._streak.clear()
+            return events
+        if not UNDERCUT_ALERTS:
             return events
         if self.curves is None and snap.year:
             from src.models.tyre_curves import season_curves
