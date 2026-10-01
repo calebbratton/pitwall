@@ -33,6 +33,9 @@ class DriverInput:
     # qualifying that helped in every season 2023-26; per driver beat the team average
     # (2023-26: 58 vs 56 winners of 85, calibrated winner log-loss 1.085 vs 1.100).
     race_pace_s: float = 0.0
+    # Qualifying looked compromised (far slower than teammate + usual gap): quali_delta_s holds
+    # the teammate-based estimate instead of the lap actually set.
+    quali_compromised: bool = False
 
 
 @dataclass
@@ -406,6 +409,72 @@ def season_form(con, year: int, before, max_abs: float = 1.5) -> dict[str, tuple
     return {team: (statistics.mean(v), len(v)) for team, v in samples.items()}
 
 
+TEAMMATE_SHRINK = 3  # pseudo-qualifyings at "same pace as the teammate"
+SEGMENT_BREAK_S = 240  # no lap started for this long = a break between Q1 / Q2 / Q3
+
+
+def _segment_bests(con, quali_sk: int) -> dict[int, dict[int, float]]:
+    """Per driver: best lap per qualifying segment (0 = Q1 ...). Segments are split at breaks in
+    running, so teammates can be compared on the same track state (track evolution makes Q3
+    laps faster than Q1 laps)."""
+    rows = con.execute(
+        """SELECT driver_number, epoch(lap_start), lap_time FROM laps
+           WHERE session_key = ? AND lap_time IS NOT NULL AND lap_start IS NOT NULL
+           ORDER BY 2""",
+        [quali_sk],
+    ).fetchall()
+    out: dict[int, dict[int, float]] = {}
+    seg, last = 0, None
+    for d, t, lt in rows:
+        if last is not None and t - last > SEGMENT_BREAK_S:
+            seg += 1
+        last = t
+        best = out.setdefault(d, {})
+        best[seg] = min(lt, best.get(seg, lt))
+    return out
+
+
+def _teammate_gap(bests: dict[int, dict[int, float]], d: int, mate: int) -> float | None:
+    """d's best minus the teammate's in the latest segment both set a time in (None if
+    none; laps over 7% off the segment's teammate time are aborted laps, ignored)."""
+    common = sorted(set(bests.get(d, {})) & set(bests.get(mate, {})))
+    for seg in reversed(common):
+        a, b = bests[d][seg], bests[mate][seg]
+        if a <= b * 1.07 and b <= a * 1.07:
+            return a - b
+    return None
+
+
+def teammate_offsets(con, year: int, before) -> dict[int, float]:
+    """Per driver: median qualifying gap to their teammate (s, + = slower), segment-matched,
+    over this season's earlier qualifyings, shrunk toward 0."""
+    rows = con.execute(
+        """SELECT session_key FROM races WHERE year = ? AND session_name = 'Qualifying'
+           AND date_start < ? ORDER BY date_start""",
+        [year, before],
+    ).fetchall()
+    gaps: dict[int, list[float]] = {}
+    for (sk,) in rows:
+        bests = _segment_bests(con, sk)
+        teams = dict(
+            con.execute(
+                "SELECT driver_number, team_name FROM raw_drivers WHERE session_key = ?", [sk]
+            ).fetchall()
+        )
+        by_team: dict[str, list[int]] = {}
+        for d in bests:
+            if teams.get(d):
+                by_team.setdefault(teams[d], []).append(d)
+        for pair in by_team.values():
+            if len(pair) == 2:
+                a, b = pair
+                g = _teammate_gap(bests, a, b)
+                if g is not None:
+                    gaps.setdefault(a, []).append(g)
+                    gaps.setdefault(b, []).append(-g)
+    return {d: statistics.median(v) * len(v) / (len(v) + TEAMMATE_SHRINK) for d, v in gaps.items()}
+
+
 def build_inputs(
     con,
     year: int,
@@ -414,8 +483,13 @@ def build_inputs(
     long_run_level: str = "driver",
     sprint_weight: float = SPRINT_WEIGHT,
     grid: dict[int, int] | None = None,
+    compromised_threshold: float | None = None,
 ) -> WeekendInputs:
-    """`long_run_level`: "driver" (each driver's own long runs) or "team" (both cars' average,
+    """`compromised_threshold` (s): a driver whose qualifying lap is this much slower than
+    teammate + usual gap (or who set no time) gets the teammate-based estimate instead; None =
+    use qualifying as set.
+
+    `long_run_level`: "driver" (each driver's own long runs) or "team" (both cars' average,
     less sensitive to one driver's fuel load / programme). `sprint_weight`: how much a sprint's
     race pace counts relative to a practice long run. `grid` (car number -> slot) overrides the
     starting grid, e.g. the official one from the live feed or `penalised_grid`."""
@@ -469,6 +543,31 @@ def build_inputs(
         if quali_sk
         else None
     ) or 90.0
+    compromised: set[int] = set()
+    if compromised_threshold is not None and quali:
+        offsets = teammate_offsets(con, year, weekend_start)
+        teams: dict[str, list[int]] = {}
+        for n in grid:
+            if names.get(n, ("", ""))[1]:
+                teams.setdefault(names[n][1], []).append(n)
+        original = dict(quali)
+        bests = _segment_bests(con, quali_sk)
+        for pair in teams.values():
+            if len(pair) != 2:
+                continue
+            for d, mate in (pair, pair[::-1]):
+                if mate not in original:
+                    continue
+                gap = _teammate_gap(bests, d, mate)  # same segment, so same track state
+                usual = offsets.get(d, 0.0)
+                if (d not in original and d in bests) or (
+                    gap is not None and gap - usual > compromised_threshold
+                ):
+                    quali[d] = original[mate] + usual
+                    compromised.add(d)
+        if compromised:
+            tlas = ", ".join(names.get(d, (str(d), ""))[0] for d in sorted(compromised))
+            notes.append(f"qualifying looked compromised for {tlas}: teammate-based pace used")
     drivers = []
     for n, pos in sorted(grid.items(), key=lambda kv: kv[1]):
         tla, team = names.get(n, (str(n), ""))
@@ -484,6 +583,7 @@ def build_inputs(
                 bias,
                 n_races,
                 race_pace_s=race_pace.get(n, 0.0) * pole / 100,
+                quali_compromised=n in compromised,
             )
         )
 

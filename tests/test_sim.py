@@ -165,3 +165,27 @@ def test_calibrated_chances_stay_ordered():
     ]
     for row in apply(table, DEFAULT_CALIBRATION, sims=5000):
         assert row["p_win"] <= row["p_podium"] <= row["p_points"]
+
+
+def test_qualifying_segments_and_teammate_gap():
+    import duckdb
+
+    from src.sim.inputs import _segment_bests, _teammate_gap
+
+    con = duckdb.connect()
+    con.execute(
+        "CREATE TABLE laps (session_key INT, driver_number INT, lap_start TIMESTAMPTZ, lap_time DOUBLE)"
+    )
+    rows = [
+        # Q1 (minutes 0-10): both cars
+        (1, "2026-01-01 10:01:00+00", 91.0),
+        (2, "2026-01-01 10:02:00+00", 90.8),
+        # Q2 after an 8-minute break: only car 2 (car 1 knocked out); track 0.5 s faster
+        (2, "2026-01-01 10:20:00+00", 90.3),
+    ]
+    con.executemany("INSERT INTO laps VALUES (7, ?, ?, ?)", rows)
+    bests = _segment_bests(con, 7)
+    assert bests == {1: {0: 91.0}, 2: {0: 90.8, 1: 90.3}}
+    # compared in Q1, where both ran: 0.2 s, not the 0.7 s their overall bests suggest
+    assert _teammate_gap(bests, 1, 2) == pytest.approx(0.2)
+    assert _teammate_gap(bests, 1, 3) is None
