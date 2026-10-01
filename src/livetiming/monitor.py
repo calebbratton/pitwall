@@ -432,8 +432,10 @@ async def pump(
     engine = None
     if alerts:
         from src.livetiming.alerts import AlertEngine
+        from src.livetiming.director import Director
 
         engine = AlertEngine()
+        director = Director()
     last_lap = None
     transcripts: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     pending: set[asyncio.Task] = set()
@@ -530,6 +532,15 @@ async def pump(
                         for alert in new:
                             start_writing(alert)
                             yield alert
+                        try:
+                            picks = await asyncio.to_thread(director.on_lap, monitor)
+                        except Exception:
+                            log.exception("director failed on lap %s", lap)
+                            picks = []
+                        for event in picks:
+                            if event["type"] == "alert":
+                                start_writing(event)
+                            yield event
             if (
                 not q3_done
                 and not quiet

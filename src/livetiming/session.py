@@ -77,7 +77,7 @@ class LiveSession:
         nothing new is published)."""
         events = [
             self._latest[k]
-            for k in ("session", "track", "weather", "forecast")
+            for k in ("session", "track", "weather", "forecast", "director")
             if k in self._latest
         ]
         snap = self.monitor.snapshot()
