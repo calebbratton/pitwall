@@ -105,7 +105,7 @@ def grid_prediction(
     slot = {d.tla: d.grid for d in inputs.drivers}
     notes = [
         "before the start: from qualifying pace and the official grid"
-        if grid
+        if grid or inputs.race_session_key is not None  # a finished race: its real start order
         else "before the start: grid = qualifying order (no penalties known)",
         *inputs.notes,
         "every car finishes and no SC/VSC luck; probabilities calibrated on 2026 results",
