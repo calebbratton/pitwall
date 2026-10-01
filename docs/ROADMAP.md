@@ -20,6 +20,16 @@ under a rate budget, and are resolved afterwards ("undercut worked, +1"); every 
   vs old from cars that stopped, the driver's own degradation, C-number life, measured pit
   loss), simulate pit now vs stay out 1-N laps vs no stop, report expected position + P(gain) +
   the deltas used. Validate against what happened after real stops (85 races) before trusting.
+- **What's unique vs MultiViewer / f1-dash / F1 TV** (timing towers and maps are table stakes):
+  calibrated SC calls + win odds, rejoin markers for any car, transcribed radio for the followed
+  driver, grounded Q&A with cited regulations, luck-adjusted pace, "was it the right call".
+- **Product backlog (agreed 2026-10-01), target the KL race Sun 4 Oct 07:00 UTC:**
+  1. Alert stream v1: SC calls + undercut/overcut alerts from the pit-review engine, each with a
+     follow-up ("it worked: +1"); event-triggered, materiality thresholds, hit rate backtested.
+  2. "Your call" mode: at an SC the viewer picks PIT / STAY OUT for their driver before seeing
+     the engine's call, then the outcome — viewer vs engine vs race.
+  3. Post-race verdict cards per driver strategy (right / wrong / unlucky, with the numbers) and
+     one-line "what just happened" after big swings.
 - Pre-race order prediction is near its ceiling (qualifying explains most of it): frozen as a
   panel, not the focus.
 
