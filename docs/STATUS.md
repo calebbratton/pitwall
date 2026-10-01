@@ -72,12 +72,14 @@ MultiViewer publishes circuit 12 (Position.z needs the F1 TV token live). Not te
 advance: the real SignalR feed for a new session and the changeover FP1 -> FP2.
 
 ## Alert stream status (2026-10-01)
-SC-call alerts on. Undercut alerts OFF: calibration on 72 real 2026 undercut attempts
-(`python -m src.livetiming.alerts --attempts`): 23 worked (32% base rate); the engine's Brier
-0.234 is worse than the base rate's 0.217 and its 50%+ calls were mostly wrong. Suspects: the
-"car ahead covers next lap" assumption (they often overcut), no out-lap/in-lap model, traffic.
-Re-enable only when it beats the base rate on this test. For the KL race: SC calls, who wins from
-here, factual alerts (pit stop rejoin position, oldest tyres, fastest lap, rain), LLM phrasing.
+SC-call alerts on. Undercut alerts ON with the learned model (src/sim/undercut_model.py): 570
+real first-stop undercut attempts 2023-26 (`python -m src.sim.undercut_data`, cached in
+data/warehouse/undercut_attempts.jsonl), logistic regression, leave-one-race-out Brier 0.228 vs
+0.251 same-season base rate, better every season, calibrated. Fires at P >= 0.6 held 2 laps:
+~10 alerts over the 15 2026 races. The simulator version had no skill (Brier 0.234 vs 0.217 on
+2026) - its "car ahead covers next lap" assumption holds only 141/587 times.
+Next for the alert stream: factual alerts (rejoin position, oldest tyres, fastest lap, rain),
+LLM phrasing, UI panel.
 
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals

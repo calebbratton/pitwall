@@ -65,6 +65,37 @@ def _first_stop(records: list[LapRecord]) -> tuple[int, str | None] | None:
     return None
 
 
+def candidate_pairs(snap, monitor: RaceMonitor) -> list[dict]:
+    """Close pairs right now: chaser within MAX_GAP_S behind the car ahead, both before their
+    first stop and owing a compound. Shared by the dataset and the live alert engine so both use
+    exactly the same features."""
+    running = [
+        d for d in snap.drivers if not d.retired and not d.in_pit and d.gap_to_leader_s is not None
+    ]
+    running.sort(key=lambda d: d.position or 99)
+    pairs = []
+    for ahead, chaser in itertools.pairwise(running):
+        gap = (chaser.gap_to_leader_s or 0) - (ahead.gap_to_leader_s or 0)
+        if not (0 <= gap <= MAX_GAP_S):
+            continue
+        if not (chaser.needs_second_compound and ahead.needs_second_compound):
+            continue
+        if chaser.pit_stops or ahead.pit_stops:
+            continue
+        ca = _recent(monitor.laps.get(chaser.number, []))
+        aa = _recent(monitor.laps.get(ahead.number, []))
+        pairs.append(
+            {
+                "chaser": chaser,
+                "ahead": ahead,
+                "gap": gap,
+                "pace_delta": None if ca is None or aa is None else ca - aa,
+                "total": snap.total_laps,
+            }
+        )
+    return pairs
+
+
 def race_attempts(year: int, race: dict) -> list[Attempt]:
     messages = list(ArchiveSession(race["path"]).messages(STRATEGY_TOPICS))
     circuit = _circuit_for(messages)
@@ -85,34 +116,7 @@ def race_attempts(year: int, race: dict) -> list[Attempt]:
         order_at[lap] = {d.number: d.position for d in snap.drivers if d.position}
         if snap.track_status != "GREEN" or not snap.total_laps:
             continue
-        running = [
-            d
-            for d in snap.drivers
-            if not d.retired and not d.in_pit and d.gap_to_leader_s is not None
-        ]
-        running.sort(key=lambda d: d.position or 99)
-        pairs = []
-        for ahead, chaser in itertools.pairwise(running):
-            gap = (chaser.gap_to_leader_s or 0) - (ahead.gap_to_leader_s or 0)
-            if not (0 <= gap <= MAX_GAP_S):
-                continue
-            if not (chaser.needs_second_compound and ahead.needs_second_compound):
-                continue
-            if chaser.pit_stops or ahead.pit_stops:
-                continue
-            ca, aa = (
-                _recent(monitor.laps.get(chaser.number, [])),
-                _recent(monitor.laps.get(ahead.number, [])),
-            )
-            pairs.append(
-                {
-                    "chaser": chaser,
-                    "ahead": ahead,
-                    "gap": gap,
-                    "pace_delta": None if ca is None or aa is None else ca - aa,
-                    "total": snap.total_laps,
-                }
-            )
+        pairs = candidate_pairs(snap, monitor)
         candidates[lap] = pairs
 
     # Resolve with the whole race known.

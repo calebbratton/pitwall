@@ -15,7 +15,9 @@ Event: {"type": "alert", "id", "kind", "lap", "headline", "detail", "drivers", "
 "live" | "resolved", "outcome": None | "worked" | "failed" | "not taken"}.
 """
 
+import functools
 import itertools
+import json
 import logging
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -29,12 +31,12 @@ from src.sim.inrace import NotEnoughData, RaceState, StopPlan, race_state, simul
 
 log = logging.getLogger(__name__)
 
-# Off until the undercut model beats the base rate on real attempts (undercut_attempts():
-# 2026, 72 attempts, Brier 0.234 vs 0.217 for "32% every time").
-UNDERCUT_ALERTS = False
+# On with the learned model (src/sim/undercut_model.py), which beats the same-season base rate
+# leave-one-race-out in every season 2023-26. (The simulator version did not: 2026 Brier 0.234
+# vs 0.217 for the base rate.)
+UNDERCUT_ALERTS = True
 UNDERCUT_MAX_GAP_S = 4.0  # beyond this a fresh-tyre out-lap can't close it
-UNDERCUT_MIN_P = 0.6
-UNDERCUT_MIN_GAIN = 0.2  # vs letting the car ahead stop first
+UNDERCUT_MIN_P = 0.6  # the learned model's 0.6-0.75 band worked 57-66% of the time
 UNDERCUT_MIN_LAPS_LEFT = 8
 PERSIST_LAPS = 2  # the condition must hold on consecutive laps before an alert fires
 MAX_PAIRS = 6  # evaluated per lap, front of the field first
@@ -122,45 +124,56 @@ class AlertEngine:
             return events
         if not UNDERCUT_ALERTS:
             return events
-        if self.curves is None and snap.year:
-            from src.models.tyre_curves import season_curves
+        model = undercut_model()
+        lap = snap.current_lap or 0
+        if model is None or not snap.total_laps or snap.total_laps - lap < UNDERCUT_MIN_LAPS_LEFT:
+            return events
+        from src.sim.undercut_data import Attempt, candidate_pairs
+        from src.sim.undercut_model import features
 
-            self.curves = season_curves(snap.year)
-        try:
-            state = race_state(
-                monitor, snap, pit_loss=pit_loss, curves=self.curves, age_curves=bool(self.curves)
-            )
-        except NotEnoughData:
-            return events
-        if state.laps_remaining < UNDERCUT_MIN_LAPS_LEFT:
-            return events
         seen = set()
-        for a, b in self._pairs(state)[:MAX_PAIRS]:
+        for pair in candidate_pairs(snap, monitor)[:MAX_PAIRS]:
+            a, b = pair["chaser"], pair["ahead"]
             cid = f"undercut-{a.tla}-{b.tla}"
             seen.add(cid)
-            p_now, p_base = self._undercut(state, a.number, b.number)
-            if p_now >= UNDERCUT_MIN_P and p_now - p_base >= UNDERCUT_MIN_GAIN:
-                self._streak[cid] = self._streak.get(cid, 0) + 1
-            else:
-                self._streak[cid] = 0
+            attempt = Attempt(
+                year=snap.year or 0,
+                race=snap.meeting,
+                lap=lap,
+                total_laps=snap.total_laps,
+                chaser=a.tla,
+                ahead=b.tla,
+                gap_s=pair["gap"],
+                chaser_age=a.tyre_age_laps or 0,
+                ahead_age=b.tyre_age_laps or 0,
+                chaser_compound=a.compound or "",
+                ahead_compound=b.compound or "",
+                new_compound="HARD" if a.compound != "HARD" else "MEDIUM",
+                pace_delta_s=pair["pace_delta"],
+                pit_loss_s=pit_loss[0],
+                response_laps=None,
+                worked=None,
+            )
+            p_now = float(model.predict(np.array([features(attempt)], dtype=float))[0])
+            self._streak[cid] = self._streak.get(cid, 0) + 1 if p_now >= UNDERCUT_MIN_P else 0
             live = self.alerts.get(cid)
             if live and live.status == "live":
-                if abs((live.p or 0) - p_now) >= 0.2:  # update in place on a big move
+                if abs((live.p or 0) - p_now) >= 0.15:  # update in place on a big move
                     live.p = round(p_now, 2)
-                    live.detail = _undercut_detail(a.tla, b.tla, p_now, p_base, state)
+                    live.detail = _undercut_detail(a.tla, b.tla, p_now, pair["gap"], snap, pit_loss)
                     events.append(live.event())
                 continue
-            if self._streak[cid] >= PERSIST_LAPS and not (live and live.status == "live"):
+            if self._streak[cid] >= PERSIST_LAPS:
                 alert = Alert(
-                    id=f"{cid}-{state.lap}",
+                    id=f"{cid}-{lap}",
                     kind="undercut",
-                    lap=state.lap,
+                    lap=lap,
                     headline=f"{a.tla}'s undercut on {b.tla} is on",
-                    detail=_undercut_detail(a.tla, b.tla, p_now, p_base, state),
+                    detail=_undercut_detail(a.tla, b.tla, p_now, pair["gap"], snap, pit_loss),
                     drivers=[a.tla, b.tla],
                     p=round(p_now, 2),
                     numbers=[a.number, b.number],
-                    stops_at_alert={a.number: a.stops, b.number: b.stops},
+                    stops_at_alert={a.number: a.pit_stops, b.number: b.pit_stops},
                 )
                 self.alerts[cid] = alert
                 events.append(alert.event())
@@ -242,12 +255,32 @@ def _stop_lap_after(monitor: RaceMonitor, number: str, lap: int) -> int | None:
     return None
 
 
-def _undercut_detail(a: str, b: str, p_now: float, p_base: float, state: RaceState) -> str:
+def _undercut_detail(
+    a: str, b: str, p: float, gap: float, snap: RaceSnapshot, pit_loss: tuple[float, float]
+) -> str:
+    left = (snap.total_laps or 0) - (snap.current_lap or 0)
     return (
-        f"If {a} pits now and {b} covers next lap, {a} finishes ahead {p_now:.0%} of the time "
-        f"(vs {p_base:.0%} if {b} stops first). Pit loss {state.pit_loss_green:.0f} s, "
-        f"{state.laps_remaining} laps to go."
+        f"{a} is {gap:.1f} s behind {b}. Pitting now, {a} comes out ahead after both stop about "
+        f"{p:.0%} of the time (learned from 570 undercuts, 2023-26; similar calls were right "
+        f"about that often). Pit loss {pit_loss[0]:.0f} s, {left} laps to go."
     )
+
+
+@functools.cache
+def undercut_model():
+    """The learned undercut model fitted on every cached attempt (src/sim/undercut_data.py), or
+    None if the dataset hasn't been built."""
+    from src.sim.undercut_data import CACHE, Attempt
+    from src.sim.undercut_model import Logistic, features
+
+    if not CACHE.exists():
+        log.warning("no undercut dataset (python -m src.sim.undercut_data): undercut alerts off")
+        return None
+    rows = [Attempt(**json.loads(line)) for line in CACHE.read_text().splitlines()]
+    rows = [r for r in rows if r.worked is not None]
+    X = np.array([features(r) for r in rows], dtype=float)
+    y = np.array([r.worked for r in rows], dtype=float)
+    return Logistic().fit(X, y)
 
 
 def hit_rate(alerts: list[Alert]) -> dict[str, float | int]:
