@@ -188,3 +188,48 @@ def test_new_session_on_the_feed_starts_a_fresh_live_session(tmp_path, monkeypat
     assert second.monitor.snapshot().session == "Practice 2"
     assert "4" not in second.monitor.state.topics.get("DriverList", {})  # nothing from FP1
     assert second.recording.endswith("rec2")
+
+
+def test_feed_timestamps_without_a_zone_are_utc():
+    from src.livetiming.client import LiveTimingClient
+
+    client = LiveTimingClient()
+    feed = {
+        "type": 1,
+        "target": "feed",
+        "arguments": ["TrackStatus", {"Status": "1"}, "2026-10-01T06:18:22.5"],
+    }
+    aware = {**feed, "arguments": ["TrackStatus", {"Status": "1"}, "2026-10-01T06:18:22.5Z"]}
+    [naive_msg] = client._decode(feed)
+    [aware_msg] = client._decode(aware)
+    assert naive_msg.offset == aware_msg.offset
+
+
+def test_a_crashed_live_session_restarts(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    from src.livetiming.archive import Message
+    from src.livetiming.session import SessionRegistry
+
+    monkeypatch.setattr("src.livetiming.session.recording_folder", lambda: tmp_path / "rec")
+    monkeypatch.setattr("src.livetiming.session.RESTART_AFTER_FAILURE_S", 0.0)
+
+    class Crashing:
+        async def messages(self):
+            yield Message(timedelta(0), "SessionInfo", {"Key": 1, "Name": "Practice 1"})
+            raise RuntimeError("unexpected feed data")
+
+    clients = iter([Crashing(), FakeLiveClient([])])
+
+    async def run():
+        registry = SessionRegistry()
+        first = registry.start_live(client_factory=lambda: next(clients))
+        await first.task
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if registry.current_live is not first:
+                break
+        return first, registry.current_live
+
+    first, second = asyncio.run(run())
+    assert second is not first and first.finished

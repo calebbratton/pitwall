@@ -147,7 +147,14 @@ class SessionRegistry:
                 self.start_live(client_factory, record, **pump_kwargs)
 
         session.task = asyncio.create_task(
-            _run_live(session, client, recorder, pump_kwargs, on_new_session=next_session)
+            _run_live(
+                session,
+                client,
+                recorder,
+                pump_kwargs,
+                on_new_session=next_session,
+                on_failure=next_session,
+            )
         )
         self.current_live = session
         return session
@@ -166,6 +173,9 @@ class SessionRegistry:
                 del self._sessions[live_id]
 
 
+RESTART_AFTER_FAILURE_S = 5.0
+
+
 class _NewSession(Exception):
     """The feed switched to another session (a different SessionInfo Key)."""
 
@@ -176,6 +186,7 @@ async def _run_live(
     recorder: Recorder | None,
     pump_kwargs: dict,
     on_new_session: Callable[[], None] | None = None,
+    on_failure: Callable[[], None] | None = None,
 ) -> None:
     session_key = None
 
@@ -195,7 +206,7 @@ async def _run_live(
                     session.monitor._radio_base = f"https://livetiming.formula1.com/static/{path}"
             yield message, False
 
-    new_session = False
+    new_session = failed = False
     try:
         async for event in pump(source(), session.monitor, load_circuit_live=True, **pump_kwargs):
             session.publish(event)
@@ -205,7 +216,8 @@ async def _run_live(
         log.info("live feed moved to session %s: starting a new live session", e)
         new_session = True
     except Exception:
-        log.exception("live session %s failed", session.live_id)
+        log.exception("live session %s failed; restarting the feed", session.live_id)
+        failed = True
     finally:
         session.finished = time.time()
         session.publish({"type": "end"})
@@ -214,3 +226,7 @@ async def _run_live(
     if new_session and on_new_session:
         # After this task has finished, so the registry sees it as no longer connected.
         asyncio.get_running_loop().call_soon(on_new_session)
+    elif failed and on_failure:
+        # Never leave the server without a live feed: a crash mid-weekend would otherwise mean
+        # nothing follows the next session.
+        asyncio.get_running_loop().call_later(RESTART_AFTER_FAILURE_S, on_failure)

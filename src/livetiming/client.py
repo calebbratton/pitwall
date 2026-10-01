@@ -131,7 +131,12 @@ class LiveTimingClient:
             try:
                 async for raw in ws:
                     for frame in filter(None, str(raw).split(RS)):
-                        for message in self._decode(json.loads(frame)):
+                        try:
+                            messages = self._decode(json.loads(frame))
+                        except Exception:
+                            log.exception("skipping a live timing frame that failed to decode")
+                            continue
+                        for message in messages:
                             yield message
             finally:
                 self.connected = False
@@ -151,6 +156,9 @@ class LiveTimingClient:
                     when = datetime.fromisoformat(rest[0])
                 except ValueError:
                     when = None
+                if when is not None and when.tzinfo is None:
+                    # Some feed timestamps carry no zone (seen 2026-10-01); the feed is UTC.
+                    when = when.replace(tzinfo=UTC)
             return [self._message(topic, data, when)] if topic else []
         if kind == 7:  # close
             log.warning("server closed the connection: %s", msg.get("error"))
