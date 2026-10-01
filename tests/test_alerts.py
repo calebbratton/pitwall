@@ -56,3 +56,48 @@ def test_hit_rate_counts_only_taken_alerts():
         Alert("s1", "sc_call", 20, "", "", []),
     ]
     assert hit_rate(alerts) == {"alerts": 3, "taken": 2, "worked": 1, "hit_rate": 0.5}
+
+
+def test_stop_alerts_group_busy_laps_and_announce_top_ten_green_stops():
+    from datetime import timedelta
+
+    from src.livetiming.archive import Message
+    from src.livetiming.monitor import RaceMonitor
+
+    def msg(t, topic, data):
+        return Message(timedelta(seconds=t), topic, data)
+
+    numbers = [str(n) for n in range(1, 13)]
+    lines = {
+        n: {
+            "Position": str(i + 1),
+            "GapToLeader": f"+{i * 2.0:.1f}",
+            "IntervalToPositionAhead": {"Value": "+2.0"},
+            "NumberOfLaps": 9,
+        }
+        for i, n in enumerate(numbers)
+    }
+    lines["1"]["GapToLeader"] = "LAP 10"
+    monitor = RaceMonitor()
+    for m in [
+        msg(0, "SessionInfo", {"Name": "Race", "Type": "Race", "Meeting": {"Name": "Test GP"}}),
+        msg(0, "TrackStatus", {"Status": "1"}),
+        msg(1, "DriverList", {n: {"Tla": f"C{n.zfill(2)}"} for n in numbers}),
+        msg(1, "LapCount", {"CurrentLap": 10, "TotalLaps": 50}),
+        msg(1, "TimingData", {"Lines": lines}),
+        # car 3 pits at the end of lap 10 and comes out on lap 11 in P3
+        msg(60, "TimingData", {"Lines": {"3": {"InPit": True}}}),
+        msg(70, "TimingData", {"Lines": {"3": {"NumberOfLaps": 10, "InPit": True}}}),
+        msg(
+            90, "TimingData", {"Lines": {"3": {"NumberOfLaps": 11, "InPit": False, "PitOut": True}}}
+        ),
+        msg(91, "LapCount", {"CurrentLap": 12}),
+    ]:
+        monitor.feed(m)
+    engine = AlertEngine()
+    events = engine.on_lap(monitor, (22.0, 13.5))
+    stops = [e for e in events if e["kind"] == "pit_stop"]
+    assert len(stops) == 1 and stops[0]["headline"].startswith("C03 pitted: rejoined P3")
+    assert engine.on_lap(monitor, (22.0, 13.5)) == [] or all(
+        e["kind"] != "pit_stop" for e in engine.on_lap(monitor, (22.0, 13.5))
+    )  # announced once

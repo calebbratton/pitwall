@@ -104,6 +104,9 @@ class AlertEngine:
         self.curves = curves
         self.alerts: dict[str, Alert] = {}
         self._streak: dict[str, int] = {}  # candidate id -> consecutive laps the condition held
+        self._stops_seen: set[tuple[str, int]] = set()  # (car, out-lap) already announced
+        self._fastest: float | None = None
+        self._raining: bool | None = None
 
     # --- safety car ----------------------------------------------------------------------------
 
@@ -116,9 +119,120 @@ class AlertEngine:
 
     # --- every lap -----------------------------------------------------------------------------
 
+    # --- facts (no prediction: straight from timing) --------------------------------------------
+
+    def _facts(self, snap: RaceSnapshot, monitor: RaceMonitor) -> list[dict[str, Any]]:
+        events = []
+        lap = snap.current_lap or 0
+        by_number = {d.number: d for d in snap.drivers}
+        ordered = [d for d in snap.drivers if d.position and not d.retired]
+        ordered.sort(key=lambda d: d.position)
+        # Completed stops (on the out-lap, with where the car rejoined). Individual alerts only for
+        # green-flag stops into the top 10; busy laps (SC/VSC, 4+ stops) and the rest of the field
+        # are one summary line each, so a safety car doesn't produce a dozen alerts.
+        stops = []
+        for car, recs in monitor.laps.items():
+            if not recs or not recs[-1].pit_out or (car, recs[-1].lap) in self._stops_seen:
+                continue
+            self._stops_seen.add((car, recs[-1].lap))
+            d = by_number.get(car)
+            if d is not None and d.position is not None and not d.retired:
+                stops.append(d)
+        stops.sort(key=lambda d: d.position)
+        neutralised = snap.track_status in ("SAFETY_CAR", "VSC", "VSC_ENDING", "RED_FLAG")
+        busy = neutralised or len(stops) > 3
+        singles = [] if busy else [d for d in stops if d.position <= 10]
+        grouped = [d for d in stops if d not in singles]
+        for d in singles:
+            ahead = next((o for o in ordered if o.position == d.position - 1), None)
+            behind_gap = (
+                f", {d.interval_s:.1f} s behind {ahead.tla}" if ahead and d.interval_s else ""
+            )
+            events.append(
+                Alert(
+                    id=f"stop-{d.tla}-{lap}",
+                    kind="pit_stop",
+                    lap=lap,
+                    headline=f"{d.tla} pitted: rejoined P{d.position}{behind_gap}",
+                    detail=f"On {(d.compound or '?').lower()}s (stop {d.pit_stops}).",
+                    drivers=[d.tla] + ([ahead.tla] if ahead else []),
+                    status="resolved",
+                ).event()
+            )
+        if grouped:
+            why = {"SAFETY_CAR": " (SC)", "VSC": " (VSC)", "VSC_ENDING": " (VSC)"}.get(
+                snap.track_status, ""
+            )
+            listed = ", ".join(f"{d.tla} P{d.position}" for d in grouped[:10])
+            more = f" +{len(grouped) - 10} more" if len(grouped) > 10 else ""
+            events.append(
+                Alert(
+                    id=f"stops-{lap}",
+                    kind="pit_stop",
+                    lap=lap,
+                    headline=f"Lap {lap} stops{why}: {listed}{more}",
+                    detail="Positions after rejoining.",
+                    drivers=[d.tla for d in grouped],
+                    status="resolved",
+                ).event()
+            )
+        # Fastest lap: second half of the race only (early ones change every few laps).
+        if snap.total_laps and lap > snap.total_laps / 2:
+            for car, recs in monitor.laps.items():
+                r = recs[-1] if recs else None
+                clean = (
+                    r is not None
+                    and r.time_s
+                    and r.lap == lap - 1
+                    and not (r.pit_in or r.pit_out or r.neutralised)
+                )
+                if not clean or (self._fastest is not None and r.time_s >= self._fastest - 1e-6):
+                    continue
+                d = by_number.get(car)
+                if self._fastest is not None and d is not None:
+                    m, sec = divmod(r.time_s, 60)
+                    events.append(
+                        Alert(
+                            id=f"fastest-{d.tla}-{r.lap}",
+                            kind="fastest_lap",
+                            lap=lap,
+                            headline=f"Fastest lap: {d.tla} {int(m)}:{sec:06.3f}",
+                            detail=f"Lap {r.lap}, on {(r.compound or '?').lower()}s "
+                            f"{r.tyre_age} laps old.",
+                            drivers=[d.tla],
+                            status="resolved",
+                        ).event()
+                    )
+                self._fastest = r.time_s
+        elif snap.total_laps:
+            for recs in monitor.laps.values():
+                r = recs[-1] if recs else None
+                if r and r.time_s and not (r.pit_in or r.pit_out or r.neutralised):
+                    self._fastest = min(self._fastest or r.time_s, r.time_s)
+        # Rain starting or stopping at the circuit.
+        weather = monitor.state.topics.get("WeatherData", {})
+        if "Rainfall" in weather:
+            raining = str(weather.get("Rainfall")) not in ("0", "")
+            if self._raining is not None and raining != self._raining:
+                events.append(
+                    Alert(
+                        id=f"rain-{lap}",
+                        kind="weather",
+                        lap=lap,
+                        headline="Rain at the circuit" if raining else "Rain has stopped",
+                        detail="From the circuit's weather station (WeatherData).",
+                        drivers=[],
+                        status="resolved",
+                    ).event()
+                )
+            self._raining = raining
+        return events
+
     def on_lap(self, monitor: RaceMonitor, pit_loss: tuple[float, float]) -> list[dict[str, Any]]:
         snap = monitor.snapshot()
         events = self._resolve(snap, monitor)
+        if snap.is_race:
+            events += self._facts(snap, monitor)
         if snap.track_status != "GREEN" or not snap.is_race:
             self._streak.clear()
             return events
