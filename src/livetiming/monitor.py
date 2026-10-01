@@ -406,6 +406,7 @@ async def pump(
     on_neutralisation: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
     load_circuit_live: bool = False,
     on_grid: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
+    alerts: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """Turn a stream of (message, quiet) into race events — shared by the live feed and the
     replay, so live runs the code the replays test.
@@ -418,12 +419,19 @@ async def pump(
     feed never waits on speech recognition. `load_circuit_live` fetches circuit data (track map,
     measured pit loss) once SessionInfo arrives — the replay precomputes it instead.
     `on_grid` runs once when the official starting grid is known (before lap 1), e.g. for a
-    pre-race prediction from the real grid."""
+    pre-race prediction from the real grid. `alerts`: run the strategy alert engine (alerts.py)
+    after each completed lap and at SC/VSC calls; it emits `alert` events."""
     loop = asyncio.get_running_loop()
     last_snapshot = last_positions = 0.0
     was_quiet = False
     circuit_done = not load_circuit_live
     grid_done = on_grid is None
+    engine = None
+    if alerts:
+        from src.livetiming.alerts import AlertEngine
+
+        engine = AlertEngine()
+    last_lap = None
     transcripts: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     pending: set[asyncio.Task] = set()
 
@@ -480,6 +488,28 @@ async def pump(
                         yield extra
             for event in drain():
                 yield event
+            if engine is not None and not quiet:
+                for e in events:
+                    if e["type"] == "pit_calls":
+                        report = pit_calls(monitor.snapshot(), monitor.pit_loss)
+                        for alert in engine.on_pit_calls(report):
+                            yield alert
+                if message.topic == "LapCount":
+                    lap = monitor.snapshot().current_lap
+                    if lap and lap != last_lap:
+                        last_lap = lap
+                        loss = (
+                            (monitor.pit_loss.green, monitor.pit_loss.safety_car)
+                            if monitor.pit_loss
+                            else (22.0, 13.5)
+                        )
+                        try:
+                            new = await asyncio.to_thread(engine.on_lap, monitor, loss)
+                        except Exception:
+                            log.exception("alert engine failed on lap %s", lap)
+                            new = []
+                        for alert in new:
+                            yield alert
             if (
                 not grid_done
                 and message.topic in ("TimingAppData", "LapCount")
@@ -527,6 +557,7 @@ async def replay(
     monitor: RaceMonitor | None = None,
     on_neutralisation: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
     on_grid: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
+    alerts: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """Play an archived session as if live (a test source for the live tooling). Messages before
     `from_lap` are applied instantly; afterwards the original timing is kept, divided by
@@ -569,5 +600,6 @@ async def replay(
         positions_every_s=positions_every_s,
         on_neutralisation=on_neutralisation,
         on_grid=on_grid,
+        alerts=alerts,
     ):
         yield event

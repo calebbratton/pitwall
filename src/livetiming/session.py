@@ -48,12 +48,16 @@ class LiveSession:
         }
     )
 
+    _alerts: dict[str, dict[str, Any]] = field(default_factory=dict)
+
     def hello(self) -> dict[str, Any]:
         return {"type": "live", "live_id": self.live_id, "source": self.source}
 
     def publish(self, event: dict[str, Any]) -> None:
         kind = event.get("type", "")
-        if kind in self._recent:
+        if kind == "alert":  # updated in place: keep the latest version of each
+            self._alerts[event.get("id", "")] = event
+        elif kind in self._recent:
             self._recent[kind].append(event)
         elif kind != "end":
             self._latest[kind] = event
@@ -82,6 +86,7 @@ class LiveSession:
             events.append(self.monitor.snapshot_event())
         if positions := self.monitor.positions_event():
             events.append(positions)
+        events.extend(self._alerts.values())
         for kind in ("lap", "race_control", "radio", "radio_transcript", "pit_calls", "prediction"):
             events.extend(self._recent[kind])
         return events

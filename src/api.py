@@ -207,6 +207,7 @@ def live_replay(
                 monitor=session.monitor,
                 on_neutralisation=prediction_event,
                 on_grid=grid_prediction_event,
+                alerts=True,
             ):
                 yield _sse(event["type"], event)
         except Exception as e:
@@ -227,6 +228,7 @@ def _start_live(app: FastAPI):
         transcriber=app.state.transcriber,
         on_neutralisation=prediction_event,
         on_grid=grid_prediction_event,
+        alerts=True,
     )
 
 
