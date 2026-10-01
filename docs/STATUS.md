@@ -138,6 +138,17 @@ lap's notice), 10% of all on-track passes flagged. Live alerts resolve to passed
 has opt-in browser notifications (battle, SC call, undercut). Recommend-only: F1 TV terms
 9.2(d)/(k) rule out automating its player (checked 2026-10-01).
 
+## Chat upgrades (2026-10-01 afternoon)
+- Post-race chat: review_pit_stop tool (pit review engine) for "was pitting the right call?";
+  the review notes rivals who got a cheap SC/VSC stop just before (Madrid NOR lap 15).
+- Live strategy chat: context includes pit-within-3-laps (hazard), undercut chances, battles.
+- Earlier safety-net list: (1) per-circuit overtaking done, no gain; (2) rivals' response
+  distribution - covered (pit review uses rivals' real stops; the learned undercut model
+  learns real responses; hazard-drawn rival stops in the in-race sim tested, no gain);
+  (3) realistic pre-race strategy - deprioritised (pre-race order is near its ceiling).
+- Next product items: "your call" mode, post-race verdict cards, phone notifications (ntfy or
+  an installable web app - user's call, text would go through a third party with ntfy).
+
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.
