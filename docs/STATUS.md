@@ -96,8 +96,9 @@ LLM phrasing, UI panel.
   lap) from 92,656 car-laps 2023-26 (2,822 stops), logistic, leave-one-race-out log-loss 0.119
   vs 0.136 constant / 0.134 tyre-age-only, better every season (2026 smallest: 0.146 vs 0.150).
   Calibrated to ~30% per lap / ~35% within 3 laps; overconfident above (rare). Interaction terms
-  and Platt scaling didn't help. Not yet used by alerts. Next idea: gradient boosting or team
-  tendencies (some teams react to rivals' stops), per-team intercepts.
+  and Platt scaling didn't help. Now a blend: 70% logistic + 30% gradient-boosted trees
+  (scikit-learn): log-loss 0.1134 (2026 0.1412), within-3-laps 0.249 vs 0.292 constant; trees
+  alone were worse on 2026 (old-era habits). Not yet used by alerts. Next idea: team tendencies.
 
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals

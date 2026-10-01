@@ -176,10 +176,51 @@ def log_loss(p: np.ndarray, y: np.ndarray) -> float:
     return float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
 
 
+# Blend of the logistic hazard and gradient-boosted trees. Trees alone are better on 2023-25 but
+# worse on 2026 (they learn the old era's pit habits); 30% trees was best on 2026 and better than
+# either model in every season (leave-one-race-out log-loss, all 0.1134 vs 0.1192 logistic,
+# 2026 0.1409 vs 0.1469). The 0.3 was chosen from 5 values on these predictions.
+TREE_WEIGHT = 0.3
+
+
+def _trees():
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    return HistGradientBoostingClassifier(
+        max_iter=200,
+        learning_rate=0.05,
+        max_leaf_nodes=15,
+        min_samples_leaf=80,
+        l2_regularization=1.0,
+        random_state=0,
+    )
+
+
+class Blend:
+    def __init__(self, X: np.ndarray, y: np.ndarray) -> None:
+        self.linear = Logistic(l2=1.0).fit(X, y)
+        self.trees = _trees().fit(X, y)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return (1 - TREE_WEIGHT) * self.linear.predict(X) + TREE_WEIGHT * self.trees.predict_proba(
+            X
+        )[:, 1]
+
+
+def evaluate_blend(rows: Rows, feature_set: tuple[str, ...] = LIVE_FEATURES) -> np.ndarray:
+    cols = columns(feature_set)
+    X = rows.X[:, cols]
+    p = np.empty(len(rows.y))
+    for ri in np.unique(rows.race):
+        test = rows.race == ri
+        p[test] = Blend(X[~test], rows.y[~test]).predict(X[test])
+    return p
+
+
 @functools.cache
-def model(feature_set: tuple[str, ...] = LIVE_FEATURES) -> Logistic:
+def model(feature_set: tuple[str, ...] = LIVE_FEATURES) -> Blend:
     rows = load()
-    return Logistic(l2=1.0).fit(rows.X[:, columns(feature_set)], rows.y)
+    return Blend(rows.X[:, columns(feature_set)], rows.y)
 
 
 def main() -> None:
@@ -191,15 +232,15 @@ def main() -> None:
         "tyre age only": evaluate(rows, BASELINE),
         "live features": evaluate(rows, LIVE_FEATURES),
     }
-    results["live, recalibrated"] = recalibrated(rows, results["live features"])
+    results["blend (30% trees)"] = evaluate_blend(rows)
     years = np.array([rows.races[i][0] for i in rows.race])
     for name, p in results.items():
         per_year = "  ".join(
             f"{y}: {log_loss(p[years == y], rows.y[years == y]):.4f}" for y in sorted(set(years))
         )
         print(f"{name:14} log-loss {log_loss(p, rows.y):.4f}   {per_year}")
-    p = results["live, recalibrated"]
-    print("\nreliability (live, recalibrated): bin, car-laps, predicted, observed")
+    p = results["blend (30% trees)"]
+    print("\nreliability (blend): bin, car-laps, predicted, observed")
     for lo, hi in ((0, 0.01), (0.01, 0.03), (0.03, 0.1), (0.1, 0.3), (0.3, 0.6), (0.6, 1.01)):
         m = (p >= lo) & (p < hi)
         if m.any():

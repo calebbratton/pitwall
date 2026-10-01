@@ -18,6 +18,8 @@ dependencies = [
     "websockets",
     "duckdb",
     "pytz",  # duckdb needs it to return TIMESTAMPTZ values
+    "numpy",
+    "scikit-learn",  # gradient-boosted trees in the rival pit-timing model
 ]
 
 [project.optional-dependencies]
