@@ -31,7 +31,7 @@ def test_pair_features_shape_and_signs():
 
 def test_director_picks_close_pair_and_alerts_once(monkeypatch):
     monkeypatch.setattr("src.sim.battles.models", lambda: (Fixed(0.6), Fixed(0.9)))
-    monkeypatch.setattr("src.livetiming.director._circuit_rel", lambda snap, fn: 1.0)
+    monkeypatch.setattr("src.livetiming.director._circuit_rel", lambda snap: 1.0)
     monitor = RaceMonitor()
     lines = {
         "1": {"Position": "1", "GapToLeader": "LAP 10", "NumberOfLaps": 9},
@@ -67,7 +67,7 @@ def test_director_picks_close_pair_and_alerts_once(monkeypatch):
 
 def test_alerted_battle_resolves_when_the_pass_happens(monkeypatch):
     monkeypatch.setattr("src.sim.battles.models", lambda: (Fixed(0.9), Fixed(0.9)))
-    monkeypatch.setattr("src.livetiming.director._circuit_rel", lambda snap, fn: 1.0)
+    monkeypatch.setattr("src.livetiming.director._circuit_rel", lambda snap: 1.0)
     monitor = RaceMonitor()
     lines = {
         "1": {"Position": "1", "GapToLeader": "LAP 10", "NumberOfLaps": 9},

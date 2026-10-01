@@ -365,3 +365,13 @@ def future_hazards(
             rows.append([f[name] for name in feature_set])
         out[d.number] = blend.predict(np.array(rows, dtype=float))
     return out
+
+
+def pit_within(snapshot, monitor, laps: int = 3, track_deg: float = 0.0) -> dict[str, float]:
+    """Per running car (TLA): P(pits within the next `laps` laps) from the live state.
+    Calibrated up to ~35%; higher values happen less often than stated."""
+    hazards = future_hazards(snapshot, monitor, track_deg=track_deg)
+    tla = {d.number: d.tla for d in snapshot.drivers}
+    return {
+        tla[n]: round(float(1 - np.prod(1 - h[:laps])), 2) for n, h in hazards.items() if n in tla
+    }

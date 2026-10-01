@@ -68,8 +68,7 @@ class Director:
         return events
 
     def on_lap(self, monitor) -> list[dict[str, Any]]:
-        from src.sim.battles import MAX_GAP_S, models, pair_features
-        from src.sim.inputs import circuit_pass_rel
+        from src.sim.battles import MAX_GAP_S
 
         snap = monitor.snapshot()
         lap = snap.current_lap or 0
@@ -93,59 +92,16 @@ class Director:
         if snap.track_status != "GREEN" or not pairs:
             return [*resolved, {"type": "director", "lap": lap, "watch": None, "battles": []}]
 
-        def laps(number: str) -> list[float]:
-            return [
-                r.time_s
-                for r in monitor.laps.get(number, [])[-3:]
-                if r.time_s and not (r.pit_in or r.pit_out or r.neutralised)
-            ]
-
         rel = getattr(self, "_pass_rel", None)
         if rel is None:
-            rel = self._pass_rel = _circuit_rel(snap, circuit_pass_rel)
-        X = np.array(
-            [
-                pair_features(
-                    gap,
-                    self._gaps.get(lap - 3, {}).get((c.tla, a.tla)),
-                    laps(c.number),
-                    laps(a.number),
-                    c.tyre_age_laps or 0,
-                    a.tyre_age_laps or 0,
-                    c.compound,
-                    a.compound,
-                    rel,
-                    a.position,
-                    lap / snap.total_laps,
-                    snap.year or 0,
-                )
-                for c, a, gap in pairs
-            ],
-            dtype=float,
-        )
+            rel = self._pass_rel = _circuit_rel(snap)
         try:
-            pass_model, close_model = self._models or models()
+            battles = score_pairs(
+                snap, monitor, pairs, self._gaps.get(lap - 3, {}), rel, self._models
+            )[:TOP]
         except Exception:  # noqa: BLE001 — no warehouse / dataset: no director
             log.warning("battle models unavailable")
             return []
-        p_pass, p_close = pass_model.predict(X), close_model.predict(X)
-        battles = sorted(
-            (
-                {
-                    "chaser": c.tla,
-                    "ahead": a.tla,
-                    "_stops": (c.pit_stops, a.pit_stops),
-                    "position": a.position,
-                    "gap": round(gap, 2),
-                    "closing": round(x[1], 2),
-                    "p_pass": round(float(pp), 2),
-                    "p_close": round(float(pc), 2),
-                }
-                for (c, a, gap), x, pp, pc in zip(pairs, X, p_pass, p_close, strict=True)
-            ),
-            key=lambda b: b["p_pass"] + 0.5 * b["p_close"],
-            reverse=True,
-        )[:TOP]
         public = [{k: v for k, v in b.items() if not k.startswith("_")} for b in battles]
         top = battles[0]
         events: list[dict[str, Any]] = [
@@ -178,7 +134,84 @@ class Director:
         return events
 
 
-def _circuit_rel(snap, circuit_pass_rel) -> float:
+def close_pairs(snap) -> list[tuple]:
+    """(chaser, car ahead, gap) for every pair within battles.MAX_GAP_S on the road."""
+    from src.sim.battles import MAX_GAP_S
+
+    running = sorted(
+        (d for d in snap.drivers if d.position and not d.retired and not d.in_pit),
+        key=lambda d: d.position,
+    )
+    return [
+        (chaser, ahead, chaser.interval_s)
+        for ahead, chaser in itertools.pairwise(running)
+        if chaser.interval_s is not None
+        and 0 < chaser.interval_s <= MAX_GAP_S
+        and not chaser.laps_down
+    ]
+
+
+def score_pairs(
+    snap, monitor, pairs, gaps_3_ago: dict, rel: float, battle_models=None
+) -> list[dict]:
+    """Battle chances for close pairs, best first (same features as battles.py's training)."""
+    from src.sim.battles import models, pair_features
+
+    lap = snap.current_lap or 0
+
+    def laps(number: str) -> list[float]:
+        return [
+            r.time_s
+            for r in monitor.laps.get(number, [])[-3:]
+            if r.time_s and not (r.pit_in or r.pit_out or r.neutralised)
+        ]
+
+    X = np.array(
+        [
+            pair_features(
+                gap,
+                gaps_3_ago.get((c.tla, a.tla)),
+                laps(c.number),
+                laps(a.number),
+                c.tyre_age_laps or 0,
+                a.tyre_age_laps or 0,
+                c.compound,
+                a.compound,
+                rel,
+                a.position,
+                lap / max(snap.total_laps or 1, 1),
+                snap.year or 0,
+            )
+            for c, a, gap in pairs
+        ],
+        dtype=float,
+    )
+    if not len(X):
+        return []
+    pass_model, close_model = battle_models or models()
+    p_pass, p_close = pass_model.predict(X), close_model.predict(X)
+    return sorted(
+        (
+            {
+                "chaser": c.tla,
+                "ahead": a.tla,
+                "_stops": (c.pit_stops, a.pit_stops),
+                "position": a.position,
+                "gap": round(gap, 2),
+                "closing": round(x[1], 2),
+                "p_pass": round(float(pp), 2),
+                "p_close": round(float(pc), 2),
+            }
+            for (c, a, gap), x, pp, pc in zip(pairs, X, p_pass, p_close, strict=True)
+        ),
+        key=lambda b: b["p_pass"] + 0.5 * b["p_close"],
+        reverse=True,
+    )
+
+
+def _circuit_rel(snap) -> float:
+    from src.sim.inputs import circuit_pass_rel
+
     try:
         from src.warehouse.queries import connect
 

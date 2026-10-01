@@ -242,33 +242,11 @@ class AlertEngine:
         lap = snap.current_lap or 0
         if model is None or not snap.total_laps or snap.total_laps - lap < UNDERCUT_MIN_LAPS_LEFT:
             return events
-        from src.sim.undercut_data import Attempt, candidate_pairs
-        from src.sim.undercut_model import features
-
         seen = set()
-        for pair in candidate_pairs(snap, monitor)[:MAX_PAIRS]:
+        for pair, p_now in undercut_chances(snap, monitor, pit_loss, model)[:MAX_PAIRS]:
             a, b = pair["chaser"], pair["ahead"]
             cid = f"undercut-{a.tla}-{b.tla}"
             seen.add(cid)
-            attempt = Attempt(
-                year=snap.year or 0,
-                race=snap.meeting,
-                lap=lap,
-                total_laps=snap.total_laps,
-                chaser=a.tla,
-                ahead=b.tla,
-                gap_s=pair["gap"],
-                chaser_age=a.tyre_age_laps or 0,
-                ahead_age=b.tyre_age_laps or 0,
-                chaser_compound=a.compound or "",
-                ahead_compound=b.compound or "",
-                new_compound="HARD" if a.compound != "HARD" else "MEDIUM",
-                pace_delta_s=pair["pace_delta"],
-                pit_loss_s=pit_loss[0],
-                response_laps=None,
-                worked=None,
-            )
-            p_now = float(model.predict(np.array([features(attempt)], dtype=float))[0])
             self._streak[cid] = self._streak.get(cid, 0) + 1 if p_now >= UNDERCUT_MIN_P else 0
             live = self.alerts.get(cid)
             if live and live.status == "live":
@@ -378,6 +356,40 @@ def _undercut_detail(
         f"{p:.0%} of the time (learned from 570 undercuts, 2023-26; similar calls were right "
         f"about that often). Pit loss {pit_loss[0]:.0f} s, {left} laps to go."
     )
+
+
+def undercut_chances(snap, monitor, pit_loss: tuple[float, float], model=None) -> list[tuple]:
+    """(pair, P(chaser ends up ahead if it pits now)) for every close pair before its first stop,
+    from the learned undercut model (same features as its training data)."""
+    from src.sim.undercut_data import Attempt, candidate_pairs
+    from src.sim.undercut_model import features
+
+    model = model or undercut_model()
+    if model is None or not snap.total_laps:
+        return []
+    out = []
+    for pair in candidate_pairs(snap, monitor):
+        a, b = pair["chaser"], pair["ahead"]
+        attempt = Attempt(
+            year=snap.year or 0,
+            race=snap.meeting,
+            lap=snap.current_lap or 0,
+            total_laps=snap.total_laps,
+            chaser=a.tla,
+            ahead=b.tla,
+            gap_s=pair["gap"],
+            chaser_age=a.tyre_age_laps or 0,
+            ahead_age=b.tyre_age_laps or 0,
+            chaser_compound=a.compound or "",
+            ahead_compound=b.compound or "",
+            new_compound="HARD" if a.compound != "HARD" else "MEDIUM",
+            pace_delta_s=pair["pace_delta"],
+            pit_loss_s=pit_loss[0],
+            response_laps=None,
+            worked=None,
+        )
+        out.append((pair, float(model.predict(np.array([features(attempt)], dtype=float))[0])))
+    return out
 
 
 @functools.cache

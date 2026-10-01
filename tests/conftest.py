@@ -41,3 +41,9 @@ def no_real_prediction_log(monkeypatch, tmp_path):
 def no_alert_llm(monkeypatch):
     """Alert phrasing calls a real LLM; tests use the templates."""
     monkeypatch.setenv("PITWALL_ALERT_LLM", "0")
+
+
+@pytest.fixture(autouse=True)
+def no_live_models(monkeypatch):
+    """The live chat's learned-model extras train on the local warehouse; tests skip them."""
+    monkeypatch.setenv("PITWALL_LIVE_MODELS", "0")

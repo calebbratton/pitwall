@@ -6,6 +6,8 @@ model is told to use only those numbers.
 """
 
 import json
+import logging
+import os
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -16,6 +18,8 @@ from src.livetiming.strategy import pit_calls
 from src.llm.factory import get_chat_model
 from src.models.tyre_curves import season_curves
 from src.sim.inrace import race_state, simulate_from
+
+log = logging.getLogger(__name__)
 
 PROMPT = """\
 You are a Formula 1 race strategy engineer on the pit wall, answering questions about the race
@@ -31,11 +35,71 @@ Rules:
   that nobody stayed out rather than describing stay-outs.
 - Tyres: HARD/MEDIUM/SOFT are this weekend's labels; compound_c is Pirelli's actual compound
   (C1 hardest .. C5 softest). Mention it when comparing tyres.
+- "pit_within_3_laps": each car's chance of pitting in the next 3 laps from a model learned on
+  2023-26 races (tyre age, stint, rivals' and teammate's stops, SC). Reliable up to ~35%; above
+  that it overstates - say "likely soon", not "will pit".
+- "undercuts": for close pairs before their first stop, the chance the chaser comes out ahead if
+  it pits now (learned from 570 real undercuts; 2026 undercuts work only ~1/3 of the time).
+- "battles": close pairs' chance of a pass on track within 5 laps (p_pass) and of being within
+  1 s within 3 laps (p_close), learned from 2023-26 races.
+- Refer to drivers by the three-letter codes exactly as given (VER, PIA, ...). Never expand a
+  code into a name or guess who it is.
 - Be direct and brief, like radio to the pit wall: verdict first, then 2-4 supporting points.
 
 RACE STATE (JSON):
 {state}
 """
+
+
+def _strategy_models(monitor: RaceMonitor, snapshot, loss: tuple[float, float]) -> dict:
+    """What the learned models say right now: who's likely to pit, undercuts, battles. Each part
+    is skipped (not guessed) if its model or data isn't available."""
+    out: dict[str, Any] = {}
+    if os.getenv("PITWALL_LIVE_MODELS", "1") == "0":  # tests: no warehouse-trained models
+        return out
+    try:
+        from src.sim.pit_hazard import pit_within
+
+        likely = sorted(pit_within(snapshot, monitor).items(), key=lambda kv: -kv[1])
+        tyres = {d.tla: (d.compound, d.tyre_age_laps) for d in snapshot.drivers}
+        out["pit_within_3_laps"] = [
+            {
+                "tla": t,
+                "p": p,
+                "compound": tyres.get(t, (None, None))[0],
+                "tyre_age": tyres.get(t, (None, None))[1],
+            }
+            for t, p in likely[:8]
+            if p >= 0.05
+        ]
+    except Exception:  # noqa: BLE001
+        log.info("pit-timing model unavailable for the live chat")
+    try:
+        from src.livetiming.alerts import undercut_chances
+
+        out["undercuts"] = [
+            {
+                "chaser": pair["chaser"].tla,
+                "ahead": pair["ahead"].tla,
+                "gap_s": round(pair["gap"], 2),
+                "p_ahead_if_pits_now": round(p, 2),
+            }
+            for pair, p in undercut_chances(snapshot, monitor, loss)
+        ]
+    except Exception:  # noqa: BLE001
+        log.info("undercut model unavailable for the live chat")
+    try:
+        from src.livetiming.director import _circuit_rel, close_pairs, score_pairs
+
+        out["battles"] = [
+            {k: v for k, v in b.items() if not k.startswith("_") and k != "closing"}
+            for b in score_pairs(
+                snapshot, monitor, close_pairs(snapshot), {}, _circuit_rel(snapshot)
+            )[:5]
+        ]
+    except Exception:  # noqa: BLE001
+        log.info("battle models unavailable for the live chat")
+    return out
 
 
 def race_context(monitor: RaceMonitor, sims: int = 2000) -> dict[str, Any]:
@@ -72,6 +136,7 @@ def race_context(monitor: RaceMonitor, sims: int = 2000) -> dict[str, Any]:
         ],
         "notes": prediction["notes"],
     }
+    context |= _strategy_models(monitor, snapshot, loss)
     if snapshot.track_status in ("SAFETY_CAR", "VSC", "VSC_ENDING"):
         report = pit_calls(snapshot, pit_loss)
         context["pit_calls"] = [
