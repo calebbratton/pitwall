@@ -159,6 +159,22 @@ decide **which predictors and functional forms** to use; 2026 data then sets the
 - Then, in order: rain scenarios (forecast-driven), grid penalties, strategy engine (per-car
   optimal stops from tyre curves + pit loss instead of random windows), like-track overtaking.
 
+### 4d. Feature map (user list, 2026-10-01) — status and next tests
+In: qualifying pace; driver's recent race pace (recency-weighted; beat team average); starting
+grid with penalties; C-number tyre-age curves (in-race). Tested, no gain: practice long runs
+(fuel), wet setting (8 races), within-race temperature, team race-vs-quali bias. Excluded on
+purpose (luck principle): DNF/reliability, mechanical failures, SC probability in pre-race.
+Next tests, in order: (1) overtaking difficulty per circuit (luck-adjusted on-track position
+changes; like-track for new circuits); (2) realistic pre-race strategy (per-car best stop plan
+from curves + pit loss, replacing random stop windows); (3) car-level tyre degradation vs the
+field; (4) straight-line speed x track type (speed traps); (5) driver tyre management and
+racecraft. Skip: circuit history (one race per circuit under the 2026 regs).
+Cornering / straight-line profile method: CarData.z + Position.z (public in the archive after a
+session; token-gated live), ~3.7 Hz. Map X/Y to lap distance, MultiViewer corners; per corner
+min speed, exit speed, throttle-return point, straight top speeds; group corners by speed band;
+use qualifying laps. TimingData mini-sector Segments carry status colours only (2048/2049/2051/
+2064), not times. Feeds like-track priors and "what suits McLaren"; modest gain for prediction.
+
 ### 5. Monte Carlo decisions
 - Options × ~1,000 simulations with common random numbers; expected points/position + risk.
 - Replaces the rule-of-thumb pit calls; continuous green-flag pit windows; VSC-specific timing

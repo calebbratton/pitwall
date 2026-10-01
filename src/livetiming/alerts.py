@@ -173,11 +173,10 @@ class AlertEngine:
             if a.gap_s - b.gap_s > UNDERCUT_MAX_GAP_S:
                 continue
 
-            def needs_stop(c):
-                life = c.life_laps or state.life.get(c.compound or "", 30)
-                return c.owes_compound or c.tyre_age + state.laps_remaining > life + 3
-
-            if needs_stop(a) and needs_stop(b):
+            # The undercut battle is over the mandatory stop: both still owe a compound. (Tyre
+            # life alone isn't a reliable "will stop": 2026 cars routinely ran past the season's
+            # proven life and finished on those tyres - backtest: 24 of 25 such alerts untaken.)
+            if a.owes_compound and b.owes_compound:
                 out.append((a, b))
         return out
 
@@ -316,5 +315,96 @@ def backtest(year: int = 2026, quiet: bool = False) -> dict:
     return {"per_race": per_race, "total": total}
 
 
+def undercut_attempts(year: int = 2026, quiet: bool = False) -> dict:
+    """Calibration on real attempts: every green-flag first stop where a car pitted while within
+    UNDERCUT_MAX_GAP_S behind the car ahead, which hadn't stopped yet. The engine's P(chaser
+    ahead) is taken the lap before (curves fitted without that race); the outcome is the order
+    RESOLVE_LAPS_AFTER_STOP laps after the car ahead stopped."""
+    from src.livetiming.archive import ArchiveSession, list_sessions
+    from src.livetiming.monitor import STRATEGY_TOPICS, _circuit_for
+    from src.models.tyre_curves import fit_curves
+    from src.sim.inrace_backtest import _race_keys
+    from src.warehouse.queries import connect
+
+    con = connect()
+    keys = _race_keys(con, year)
+    rows = []  # (race, chaser, ahead, lap, p_now, p_base, worked)
+    for race in list_sessions(year):
+        messages = list(ArchiveSession(race["path"]).messages(STRATEGY_TOPICS))
+        circuit = _circuit_for(messages)
+        loss = (
+            (circuit.pit_loss.green, circuit.pit_loss.safety_car)
+            if circuit and circuit.pit_loss
+            else (22.0, 13.5)
+        )
+        curves = fit_curves(con, year, exclude=(keys.get(race["date"]),)) or None
+        monitor = RaceMonitor(pit_loss=circuit.pit_loss if circuit else None)
+        engine = AlertEngine(curves=curves or {})
+        candidates: dict[str, tuple] = {}  # chaser number -> (state, a, b) at the lap before
+        last_lap = None
+        pending = []  # (a, b, lap, p_now, p_base)
+        order_at: dict[int, dict[str, int]] = {}  # leader's lap -> running order as it started
+        for m in messages:
+            monitor.feed(m)
+            if m.topic != "LapCount":
+                continue
+            snap = monitor.snapshot()
+            lap = snap.current_lap
+            if not lap or lap == last_lap:
+                continue
+            last_lap = lap
+            order_at[lap] = {d.number: d.position for d in snap.drivers if d.position}
+            # Did a car from last lap's close pairs pit (in-lap = the lap just completed)?
+            for a_no, (p_now, p_base, b_no, a_tla, b_tla) in list(candidates.items()):
+                a_stop = _stop_lap_after(monitor, a_no, lap - 2)
+                b_stop = _stop_lap_after(monitor, b_no, lap - 2)
+                if a_stop is not None and b_stop is None:
+                    pending.append((a_no, b_no, a_tla, b_tla, a_stop, p_now, p_base))
+            candidates = {}
+            if snap.track_status != "GREEN":
+                continue
+            try:
+                state = race_state(
+                    monitor, snap, pit_loss=loss, curves=curves, age_curves=bool(curves)
+                )
+            except NotEnoughData:
+                continue
+            for a, b in engine._pairs(state):
+                p_now, p_base = engine._undercut(state, a.number, b.number)
+                candidates[a.number] = (p_now, p_base, b.number, a.tla, b.tla)
+        # Outcomes, from the finished race.
+        final = {}
+        for a_no, b_no, a_tla, b_tla, a_stop, p_now, p_base in pending:
+            b_stop = _stop_lap_after(monitor, b_no, a_stop)
+            if b_stop is None:
+                continue
+            judge = b_stop + RESOLVE_LAPS_AFTER_STOP
+            pos = order_at.get(judge) or order_at.get(max(order_at)) or {}
+            if a_no in pos and b_no in pos:
+                final[(a_no, b_no)] = (a_tla, b_tla, a_stop, p_now, p_base, pos[a_no] < pos[b_no])
+        for a_tla, b_tla, a_stop, p_now, p_base, worked in final.values():
+            rows.append((race["meeting"], a_tla, b_tla, a_stop, p_now, p_base, worked))
+            if not quiet:
+                print(
+                    f"  {race['meeting']:26} L{a_stop} {a_tla} on {b_tla}: p {p_now:.0%} -> {'worked' if worked else 'failed'}"
+                )
+    p = np.array([r[4] for r in rows])
+    y = np.array([r[6] for r in rows], dtype=float)
+    out = {"attempts": len(rows), "worked": int(y.sum()) if len(rows) else 0}
+    if len(rows):
+        out["brier"] = float(np.mean((p - y) ** 2))
+        out["brier_base_rate"] = float(np.mean((y.mean() - y) ** 2))
+        out["reliability"] = [
+            (lo, hi, int(m.sum()), float(p[m].mean()), float(y[m].mean()))
+            for lo, hi in ((0, 0.3), (0.3, 0.5), (0.5, 0.7), (0.7, 1.01))
+            if (m := (p >= lo) & (p < hi)).any()
+        ]
+    if not quiet:
+        print(out)
+    return out
+
+
 if __name__ == "__main__":
-    backtest()
+    import sys
+
+    undercut_attempts() if "--attempts" in sys.argv else backtest()

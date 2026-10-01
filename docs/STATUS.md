@@ -71,6 +71,14 @@ FP1 (Fri 2 Oct 04:30 UTC = Thu 23:30 CT): keep `PITWALL_LIVE_AUTOSTART=1 uvicorn
 MultiViewer publishes circuit 12 (Position.z needs the F1 TV token live). Not testable in
 advance: the real SignalR feed for a new session and the changeover FP1 -> FP2.
 
+## Alert stream status (2026-10-01)
+SC-call alerts on. Undercut alerts OFF: calibration on 72 real 2026 undercut attempts
+(`python -m src.livetiming.alerts --attempts`): 23 worked (32% base rate); the engine's Brier
+0.234 is worse than the base rate's 0.217 and its 50%+ calls were mostly wrong. Suspects: the
+"car ahead covers next lap" assumption (they often overcut), no out-lap/in-lap model, traffic.
+Re-enable only when it beats the base rate on this test. For the KL race: SC calls, who wins from
+here, factual alerts (pit stop rejoin position, oldest tyres, fastest lap, rain), LLM phrasing.
+
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.
