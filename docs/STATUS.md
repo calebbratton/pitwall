@@ -122,8 +122,10 @@ Sweep half-life {1.5,3,5} x race-pace weight {0.25,0.5} over 85 races (4000 sims
 + weight 0.5 best calibrated (winner log-loss 1.065 vs 1.164, better every season, 2026 1.31 vs
 1.45). Field-spread-dependent calibration: no gain on top. Late-2024 replay (14 races): grid stage
 5/14 winners vs pole 4/14, pre-Q3 3/14 (it lagged McLaren's rise - fixed in spirit by the faster
-recency). Next test: qualifying "ideal lap" (sum of best sectors) vs best lap - user idea about
-2026 deployment tuning / tyre windows.
+recency). Qualifying "ideal lap" (best S1+S2+S3, user idea about 2026 deployment tuning): worse
+than the best lap (winner log-loss 1.118 ideal / 1.101 blend vs 1.065; 2026 too) - consistent with
+deployment, since sector bests on full deployment can't be joined within one lap's energy budget.
+build_inputs(quali_mode=) kept, default "best".
 
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals

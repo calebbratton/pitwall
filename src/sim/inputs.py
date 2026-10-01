@@ -138,6 +138,30 @@ def penalised_grid(
     return out
 
 
+def _ideal_deltas(con, quali_sk: int | None) -> dict[int, float]:
+    """Per driver: their ideal lap (best S1 + best S2 + best S3 across the session) minus the
+    best ideal lap. Speed a driver showed in pieces but didn't put on one lap (2026 deployment
+    experiments, tyre windows, traffic, mistakes all look like this).
+
+    Tested 2026-10-01 (85 races, 4000 sims) as qualifying pace, alone and blended 50/50 with the
+    best lap: worse winner calibration (1.118 / 1.101 vs 1.065) and fewer winners (56 vs 58), 2026
+    included. Likely because a lap built from sectors each driven on full deployment isn't
+    drivable with a per-lap energy budget - so the best lap stays the default."""
+    if quali_sk is None:
+        return {}
+    rows = con.execute(
+        """SELECT driver_number, min(s1), min(s2), min(s3) FROM laps
+           WHERE session_key = ? AND s1 IS NOT NULL AND s2 IS NOT NULL AND s3 IS NOT NULL
+           GROUP BY 1""",
+        [quali_sk],
+    ).fetchall()
+    ideal = {d: a + b + c for d, a, b, c in rows if a and b and c}
+    if not ideal:
+        return {}
+    best = min(ideal.values())
+    return {d: t - best for d, t in ideal.items() if t <= best * 1.07}
+
+
 def _quali_deltas(con, quali_sk: int | None) -> dict[int, float]:
     if quali_sk is None:
         return {}
@@ -487,6 +511,7 @@ def build_inputs(
     compromised_threshold: float | None = None,
     quali: dict[int, float] | None = None,
     pole_s: float | None = None,
+    quali_mode: str = "best",
 ) -> WeekendInputs:
     """`compromised_threshold` (s): a driver whose qualifying lap is this much slower than
     teammate + usual gap (or who set no time) gets the teammate-based estimate instead; None =
@@ -524,6 +549,12 @@ def build_inputs(
 
     grid = grid or _grid(con, race_sk, quali_sk)
     quali = dict(quali) if quali is not None else _quali_deltas(con, quali_sk)
+    if quali_mode in ("ideal", "blend"):
+        ideal = _ideal_deltas(con, quali_sk)
+        if quali_mode == "ideal":
+            quali = {d: ideal.get(d, v) for d, v in quali.items()}
+        else:
+            quali = {d: (v + ideal[d]) / 2 if d in ideal else v for d, v in quali.items()}
     long_run = _long_run_deltas(pace_sessions, laps_by_session, deg)
     names = _drivers(con, [sk for sk in sessions.values()])
     if long_run_level == "team":
