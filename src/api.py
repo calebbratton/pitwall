@@ -137,6 +137,7 @@ def create_app(
     app.get("/api/live/current")(live_current)
     app.get("/api/live/stream")(live_stream)
     app.get("/api/race/verdicts")(race_verdicts)
+    app.get("/api/race/list")(race_list)
     return app
 
 
@@ -223,6 +224,22 @@ def live_replay(
     return StreamingResponse(
         events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
     )
+
+
+def race_list(year: int) -> dict[str, Any]:
+    """Finished races in the warehouse for a season (for the review tab)."""
+    from src.warehouse.queries import connect
+
+    con = connect()
+    try:
+        rows = con.execute(
+            """SELECT location, strftime(date_start, '%Y-%m-%d') FROM races
+               WHERE year = ? AND session_name = 'Race' ORDER BY date_start""",
+            [year],
+        ).fetchall()
+    finally:
+        con.close()
+    return {"year": year, "races": [{"place": loc, "date": d} for loc, d in rows]}
 
 
 async def race_verdicts(year: int, place: str) -> dict[str, Any]:
