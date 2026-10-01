@@ -29,3 +29,9 @@ def no_weather_forecasts(monkeypatch):
         raise RuntimeError("weather forecast blocked in tests")
 
     monkeypatch.setattr("src.livetiming.monitor.race_rain", blocked)
+
+
+@pytest.fixture(autouse=True)
+def no_real_prediction_log(monkeypatch, tmp_path):
+    """The locked-in prediction log (predictions/) is a record; tests write to a temp folder."""
+    monkeypatch.setattr("src.sim.prediction_log.PREDICTIONS", tmp_path / "predictions")

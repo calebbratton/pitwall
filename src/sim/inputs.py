@@ -484,10 +484,15 @@ def build_inputs(
     sprint_weight: float = SPRINT_WEIGHT,
     grid: dict[int, int] | None = None,
     compromised_threshold: float | None = None,
+    quali: dict[int, float] | None = None,
+    pole_s: float | None = None,
 ) -> WeekendInputs:
     """`compromised_threshold` (s): a driver whose qualifying lap is this much slower than
     teammate + usual gap (or who set no time) gets the teammate-based estimate instead; None =
     use qualifying as set.
+
+    `quali` / `pole_s` override qualifying (gap to the fastest lap, s / the fastest lap) - e.g.
+    from live timing before qualifying has finished and reached the warehouse.
 
     `long_run_level`: "driver" (each driver's own long runs) or "team" (both cars' average,
     less sensitive to one driver's fuel load / programme). `sprint_weight`: how much a sprint's
@@ -517,7 +522,7 @@ def build_inputs(
         notes.append(f"default degradation used for {', '.join(missing)}")
 
     grid = grid or _grid(con, race_sk, quali_sk)
-    quali = _quali_deltas(con, quali_sk)
+    quali = dict(quali) if quali is not None else _quali_deltas(con, quali_sk)
     long_run = _long_run_deltas(pace_sessions, laps_by_session, deg)
     names = _drivers(con, [sk for sk in sessions.values()])
     if long_run_level == "team":
@@ -537,12 +542,16 @@ def build_inputs(
         con, year, weekend_start, half_life=RACE_PACE_HALF_LIFE, by="driver"
     )
     pole = (
-        con.execute("SELECT min(lap_time) FROM laps WHERE session_key = ?", [quali_sk]).fetchone()[
-            0
-        ]
-        if quali_sk
-        else None
-    ) or 90.0
+        pole_s
+        or (
+            con.execute(
+                "SELECT min(lap_time) FROM laps WHERE session_key = ?", [quali_sk]
+            ).fetchone()[0]
+            if quali_sk
+            else None
+        )
+        or 90.0
+    )
     compromised: set[int] = set()
     if compromised_threshold is not None and quali:
         offsets = teammate_offsets(con, year, weekend_start)

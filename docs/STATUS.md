@@ -109,6 +109,13 @@ and Sepang's 5.543 km / 15 corners used in the like-track comparison (2026-09-30
 FP1: trace Sepang's outline from the archive's Position.z (or MultiViewer circuit 12) and use
 measured length/corners; use the weekend's practice for tyre wear rather than borrowing Shanghai.
 
+## Prediction standard (user, 2026-10-01)
+Two locked-in predictions per race, logged to predictions/<year>/ (committed; write-once):
+pre-Q3 (live server, when qualifying reaches Q3: Q1/Q2 times + provisional order) and grid (race
+feed's official grid). Score with `python -m src.sim.scorecard`. Race distance before race day
+comes from reference/race_laps_<year>.json (KL 56 - unverified) or last year's race. After each
+race weekend: commit the new predictions/ files, then run the scorecard once the race is ingested.
+
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.

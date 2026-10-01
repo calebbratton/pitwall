@@ -407,6 +407,7 @@ async def pump(
     load_circuit_live: bool = False,
     on_grid: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
     alerts: bool = False,
+    on_q3: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Turn a stream of (message, quiet) into race events — shared by the live feed and the
     replay, so live runs the code the replays test.
@@ -419,13 +420,15 @@ async def pump(
     feed never waits on speech recognition. `load_circuit_live` fetches circuit data (track map,
     measured pit loss) once SessionInfo arrives — the replay precomputes it instead.
     `on_grid` runs once when the official starting grid is known (before lap 1), e.g. for a
-    pre-race prediction from the real grid. `alerts`: run the strategy alert engine (alerts.py)
+    pre-race prediction from the real grid. `on_q3` runs once when qualifying reaches Q3 (the
+    pre-Q3 prediction). `alerts`: run the strategy alert engine (alerts.py)
     after each completed lap and at SC/VSC calls; it emits `alert` events."""
     loop = asyncio.get_running_loop()
     last_snapshot = last_positions = 0.0
     was_quiet = False
     circuit_done = not load_circuit_live
     grid_done = on_grid is None
+    q3_done = on_q3 is None
     engine = None
     if alerts:
         from src.livetiming.alerts import AlertEngine
@@ -511,6 +514,16 @@ async def pump(
                         for alert in new:
                             yield alert
             if (
+                not q3_done
+                and not quiet
+                and message.topic == "TimingData"
+                and str(message.data.get("SessionPart")) == "3"
+                and monitor.snapshot().session == "Qualifying"
+            ):
+                q3_done = True
+                if extra := await asyncio.to_thread(on_q3, monitor):
+                    yield extra
+            if (
                 not grid_done
                 and message.topic in ("TimingAppData", "LapCount")
                 and monitor.starting_grid()
@@ -558,6 +571,7 @@ async def replay(
     on_neutralisation: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
     on_grid: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
     alerts: bool = False,
+    on_q3: Callable[[RaceMonitor], dict[str, Any] | None] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Play an archived session as if live (a test source for the live tooling). Messages before
     `from_lap` are applied instantly; afterwards the original timing is kept, divided by
@@ -601,5 +615,6 @@ async def replay(
         on_neutralisation=on_neutralisation,
         on_grid=on_grid,
         alerts=alerts,
+        on_q3=on_q3,
     ):
         yield event

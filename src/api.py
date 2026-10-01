@@ -33,7 +33,7 @@ from src.llm.transcribe import RadioTranscriber
 from src.rag.index import RegulationIndex
 from src.seasons import out_of_scope_message, supported_seasons
 from src.sim.inrace import NotEnoughData
-from src.sim.prerace import grid_prediction_event
+from src.sim.prerace import grid_prediction_event, pre_q3_prediction_event
 from src.tools.openf1 import HttpOpenF1Client
 
 log = logging.getLogger(__name__)
@@ -229,6 +229,7 @@ def _start_live(app: FastAPI):
         on_neutralisation=prediction_event,
         on_grid=grid_prediction_event,
         alerts=True,
+        on_q3=pre_q3_prediction_event,
     )
 
 

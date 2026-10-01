@@ -326,3 +326,32 @@ def test_practice_and_qualifying_use_best_lap_timing_and_skip_race_calls():
         quali.feed(m)
     nor = quali.snapshot().driver("NOR")
     assert (nor.gap_to_leader_s, nor.best_lap_s) == (0.2, 103.7)  # the Q2 numbers
+
+
+def test_on_q3_fires_once_when_qualifying_reaches_q3():
+    calls = []
+
+    def on_q3(monitor):
+        calls.append(monitor.snapshot().session)
+        return {"type": "prediction", "stage": "pre-Q3"}
+
+    messages = [
+        _msg(
+            0,
+            "SessionInfo",
+            {"Name": "Qualifying", "Type": "Qualifying", "Meeting": {"Name": "Test GP"}},
+        ),
+        _msg(1, "TimingData", {"SessionPart": 1, "Lines": {}}),
+        _msg(600, "TimingData", {"SessionPart": 2}),
+        _msg(1200, "TimingData", {"SessionPart": 3}),
+        _msg(1300, "TimingData", {"SessionPart": 3}),
+    ]
+
+    async def collect():
+        return [e async for e in replay(FakeSession(messages), speed=1e9, on_q3=on_q3)]
+
+    events = asyncio.run(collect())
+    assert calls == ["Qualifying"]
+    assert [e for e in events if e["type"] == "prediction"] == [
+        {"type": "prediction", "stage": "pre-Q3"}
+    ]
