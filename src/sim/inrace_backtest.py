@@ -53,7 +53,7 @@ def _race_keys(con, year: int) -> dict[str, int]:
     return dict(rows)
 
 
-def capture(year: int, age_curves: bool = False) -> list[Checkpoint]:
+def capture(year: int, age_curves: bool = False, hazards: bool = False) -> list[Checkpoint]:
     """`age_curves`: age tyres with the season's tyre-age curves, fitted without the race being
     captured (no leakage)."""
     from src.models.tyre_curves import fit_curves
@@ -74,6 +74,16 @@ def capture(year: int, age_curves: bool = False) -> list[Checkpoint]:
             else (22.0, 13.5)
         )
         curves = fit_curves(con, year, exclude=(race_sk,)) if age_curves else None
+        blend = None
+        if hazards:
+            from src.sim.pit_hazard import LIVE_FEATURES, Blend, columns, load
+
+            rows = load()
+            location = con.execute(
+                "SELECT location FROM races WHERE session_key = ?", [race_sk]
+            ).fetchone()[0]
+            keep = np.array([rows.races[i] != (year, location) for i in rows.race])
+            blend = Blend(rows.X[keep][:, columns(LIVE_FEATURES)], rows.y[keep])
         monitor = RaceMonitor()
         status = None
         green_marks: set[int] = set()
@@ -95,18 +105,21 @@ def capture(year: int, age_curves: bool = False) -> list[Checkpoint]:
                             kind = "GREEN"
             if kind:
                 try:
-                    taken.append(
-                        (
-                            kind,
-                            race_state(
-                                monitor,
-                                monitor.snapshot(),
-                                pit_loss=loss,
-                                curves=curves,
-                                age_curves=age_curves,
-                            ),
-                        )
+                    state = race_state(
+                        monitor,
+                        monitor.snapshot(),
+                        pit_loss=loss,
+                        curves=curves,
+                        age_curves=age_curves,
                     )
+                    if blend is not None:
+                        from dataclasses import replace as _replace
+
+                        from src.sim.pit_hazard import future_hazards
+
+                        hz = future_hazards(monitor.snapshot(), monitor, blend)
+                        state = _replace(state, stop_hazard={k: v.tolist() for k, v in hz.items()})
+                    taken.append((kind, state))
                 except NotEnoughData:
                     pass
         for kind, state in taken:
@@ -117,11 +130,14 @@ def capture(year: int, age_curves: bool = False) -> list[Checkpoint]:
     return checkpoints
 
 
-def load_or_capture(year: int, refresh: bool = False, age_curves: bool = False) -> list[Checkpoint]:
-    path = CACHE / f"inrace_checkpoints_{year}{'_curves' if age_curves else ''}.pkl"
+def load_or_capture(
+    year: int, refresh: bool = False, age_curves: bool = False, hazards: bool = False
+) -> list[Checkpoint]:
+    suffix = ("_curves" if age_curves else "") + ("_hazard" if hazards else "")
+    path = CACHE / f"inrace_checkpoints_{year}{suffix}.pkl"
     if path.exists() and not refresh:
         return pickle.loads(path.read_bytes())
-    checkpoints = capture(year, age_curves)
+    checkpoints = capture(year, age_curves, hazards)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pickle.dumps(checkpoints))
     return checkpoints
@@ -194,9 +210,10 @@ def main() -> None:
     ap.add_argument("--sims", type=int, default=400)
     ap.add_argument("--refresh", action="store_true", help="re-capture checkpoints")
     ap.add_argument("--age-curves", action="store_true", help="season tyre-age curves (LORO)")
+    ap.add_argument("--hazards", action="store_true", help="rival pit-timing model (LORO)")
     args = ap.parse_args()
 
-    checkpoints = load_or_capture(args.year, args.refresh, args.age_curves)
+    checkpoints = load_or_capture(args.year, args.refresh, args.age_curves, args.hazards)
     races = sorted({cp.race for cp in checkpoints})
     print(
         f"{len(checkpoints)} checkpoints in {len(races)} races: "

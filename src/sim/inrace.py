@@ -68,6 +68,9 @@ class RaceState:
     # Seconds lost vs a fresh set at each tyre age, per compound label, from the season's
     # tyre-age curves (by Pirelli C-number). Empty = linear `deg` per lap of age.
     age_loss: dict[str, list[float]] = field(default_factory=dict)
+    # Per car: P(pits at the end of lap k) for k = 1..remaining from the rival pit-timing model
+    # (pit_hazard.future_hazards). Empty = a uniform stop lap before the tyres run out.
+    stop_hazard: dict[str, list[float]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -302,6 +305,17 @@ def simulate_from(
     needs_stop = np.broadcast_to(must | wont_last, (sims, n))
     latest = np.clip(life - age[:1], 1, max(remaining - 1, 1))
     stop_lap = np.where(needs_stop, 1 + np.floor(rng.random((sims, n)) * latest).astype(int), -1)
+    for i, c in enumerate(cars):
+        hz = state.stop_hazard.get(c.number)
+        if hz is None or not needs_stop[0, i]:
+            continue
+        # First stop drawn from the learned hazard; cars that "wouldn't" stop before their tyres
+        # run out stop at the latest sensible lap.
+        last = int(latest[0, i])
+        h = np.clip(np.asarray(hz[:last], dtype=float), 0.0, 1.0)
+        cdf = 1 - np.cumprod(1 - h)
+        drawn = np.searchsorted(cdf, rng.random(sims)) + 1
+        stop_lap[:, i] = np.minimum(drawn, last)
     if state.status in ("SAFETY_CAR", "VSC"):
         # Cars that need a stop take the cheap one now (what the pit calls say and what teams
         # do): most of the time, not always — some gamble on track position.
@@ -407,5 +421,5 @@ def simulate_from(
         "sims": sims,
         "table": table,
         "notes": state.notes,
-        **({"positions": positions} if return_positions else {}),
+        **({"positions": positions, "stop_laps": stop_lap} if return_positions else {}),
     }

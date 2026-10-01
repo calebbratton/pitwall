@@ -284,3 +284,69 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def future_hazards(
+    snapshot, monitor, blend: "Blend | None" = None, feature_set: tuple[str, ...] = LIVE_FEATURES
+) -> dict[str, np.ndarray]:
+    """Per running car: P(pits at the end of lap k) for k = 1..laps remaining, if it hasn't
+    stopped by then - from the live state, with tyre age and race fraction rolled forward and
+    rivals' stops / SC set to 'none' after this lap. Features match load()."""
+    blend = blend or model(feature_set)
+    lap, total = snapshot.current_lap or 0, snapshot.total_laps or 0
+    remaining = max(total - lap, 0)
+    cars = [d for d in snapshot.drivers if not d.retired and d.position]
+    if not remaining or not cars:
+        return {}
+    order = sorted(cars, key=lambda d: d.position)
+    ages = [d.tyre_age_laps for d in cars if d.tyre_age_laps is not None]
+    field_age = statistics.median(ages) if ages else 0
+    stopped = sum(d.pit_stops > 0 for d in cars) / len(cars)
+    pitted_last = {car: bool(recs and recs[-1].pit_in) for car, recs in monitor.laps.items()}
+    teams: dict[str, list[str]] = {}
+    for d in cars:
+        teams.setdefault(d.team, []).append(d.number)
+    weather = monitor.state.topics.get("WeatherData", {})
+    raining = str(weather.get("Rainfall", "0")) not in ("0", "")
+    status = snapshot.track_status
+    out = {}
+    for i, d in enumerate(order):
+        ahead = order[i - 1] if i else None
+        behind = order[i + 1] if i + 1 < len(order) else None
+        mate = next((m for m in teams.get(d.team, []) if m != d.number), None)
+        age0 = d.tyre_age_laps or 0
+        rows = []
+        for k in range(1, remaining + 1):
+            now = k == 1
+            age = age0 + k
+            f = {
+                "age": age,
+                "age_sq": age**2 / 100,
+                "first_stint": float(d.pit_stops == 0),
+                "race_fraction": (lap + k) / total,
+                "laps_left_lt5": float(total - lap - k < 5),
+                "sc": float(now and status == "SAFETY_CAR"),
+                "vsc": float(now and status in ("VSC", "VSC_ENDING")),
+                "red": 0.0,
+                "ahead_pitted_last_lap": float(
+                    now and bool(ahead and pitted_last.get(ahead.number))
+                ),
+                "behind_pitted_last_lap": float(
+                    now and bool(behind and pitted_last.get(behind.number))
+                ),
+                "teammate_pitted_last_lap": float(now and bool(mate and pitted_last.get(mate))),
+                "teammate_pitting_now": 0.0,
+                "share_stopped": stopped,
+                "age_vs_field": age0 - field_age,
+                "gap_ahead": min(d.interval_s if d.interval_s is not None else 10.0, 10.0),
+                "gap_behind": min(
+                    behind.interval_s if behind and behind.interval_s is not None else 10.0, 10.0
+                ),
+                "position": float(d.position),
+                "raining": float(raining),
+                **{f"compound_{c.lower()}": float(d.compound == c) for c in COMPOUNDS},
+                "regs_2026": float((snapshot.year or 0) >= 2026),
+            }
+            rows.append([f[name] for name in feature_set])
+        out[d.number] = blend.predict(np.array(rows, dtype=float))
+    return out

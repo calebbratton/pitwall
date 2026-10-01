@@ -76,3 +76,32 @@ def test_backtest_scoring_and_reliability_table():
     table = {row[0]: row for row in calibration_table(scores)}
     _, n, predicted, observed = table["0.80-0.95"]
     assert (n, round(predicted, 3), observed) == (2, 0.85, 0.5)  # two ~85% calls, one came true
+
+
+def test_rival_stop_lap_follows_the_hazard():
+    from dataclasses import replace
+
+    base = RaceState(
+        lap=20,
+        laps_remaining=20,
+        status="GREEN",
+        cars=[
+            CarState("1", "AAA", 1, 0.0, "MEDIUM", 20, 0, True, 0.0),
+            CarState("2", "BBB", 2, 30.0, "HARD", 5, 1, False, 0.0),
+        ],
+        deg={"MEDIUM": 0.05, "HARD": 0.03},
+        life={"MEDIUM": 40, "HARD": 45},
+        pit_loss_green=22.0,
+        pit_loss_sc=13.0,
+    )
+    hazard = [0.0, 0.0, 1.0] + [0.0] * 17  # certain stop at the end of lap 3 from now
+    state = replace(base, stop_hazard={"1": hazard})
+    a = simulate_from(
+        state, sims=200, seed=1, calib=InRaceParams(pace_sigma=0), return_positions=True
+    )
+    b = simulate_from(
+        base, sims=200, seed=1, calib=InRaceParams(pace_sigma=0), return_positions=True
+    )
+    assert (a["stop_laps"][:, 0] == 3).all()  # drawn from the hazard
+    assert len(set(b["stop_laps"][:, 0].tolist())) > 3  # uniform without one
+    assert (a["stop_laps"][:, 1] == -1).all()  # car 2 has stopped and owes nothing

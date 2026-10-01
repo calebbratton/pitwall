@@ -99,6 +99,9 @@ LLM phrasing, UI panel.
   and Platt scaling didn't help. Now a blend: 70% logistic + 30% gradient-boosted trees
   (scikit-learn): log-loss 0.1134 (2026 0.1412), within-3-laps 0.249 vs 0.292 constant; trees
   alone were worse on 2026 (old-era habits). Not yet used by alerts. Next idea: team tendencies.
+- Hazard-drawn rival stop laps in the in-race simulator (RaceState.stop_hazard, model trained
+  without the test race): no gain (calibrated winner log-loss 1.348 vs 1.322 uniform). Off; the
+  hazard's value is answering "who pits next" directly (chat / alerts), not the win odds.
 
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
