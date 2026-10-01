@@ -127,6 +127,14 @@ than the best lap (winner log-loss 1.118 ideal / 1.101 blend vs 1.065; 2026 too)
 deployment, since sector bests on full deployment can't be joined within one lap's energy budget.
 build_inputs(quali_mode=) kept, default "best".
 
+## Battle Director (2026-10-01, user request)
+src/sim/battles.py + src/livetiming/director.py: learned P(pass within 5 laps) / P(within 1 s
+within 3 laps) for every close pair (2023-26, leave-one-race-out pass log-loss 0.314 vs 0.380
+gap-only; calibrated). Each lap the live server emits a director pick ("watch HAM's onboard")
+shown at the top of Strategy calls, plus a battle alert when the top battle changes with a pass
+>= 50% likely (Baku 2026 replay: 1 such alert; picks every lap). Recommend-only: F1 TV terms
+9.2(d)/(k) rule out automating its player (checked 2026-10-01).
+
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.
