@@ -4,11 +4,13 @@ Backtests must not peek at the race: season-wide rates exclude the target race, 
 practice / sprint / qualifying, and the grid is the order cars lined up in (known at lights out).
 """
 
+import functools
 import statistics
 from dataclasses import dataclass, field
 
 from src.livetiming.circuits import fetch_circuit
 from src.models.tyres import CleanLap, fit_tyre_model
+from src.warehouse.queries import connect
 
 MIN_LONG_RUN_LAPS = 6
 SPRINT_WEIGHT = 2.0  # a sprint is a real race: its pace counts double vs a practice long run
@@ -50,6 +52,9 @@ class WeekendInputs:
     pit_loss_vsc: float = DEFAULT_PIT_LOSS[2]
     sc_laps: float = 6.0  # typical safety car length, laps (incl. the restart lap)
     vsc_laps: float = 1.4  # typical VSC length, laps
+    # On-track pass rate at this circuit relative to the median circuit, from earlier seasons
+    # (1.0 = median or unknown). The simulator scales the pass threshold by it.
+    pass_rel: float = 1.0
 
 
 def weekend_sessions(con, year: int, place: str) -> tuple[int, dict[str, int]]:
@@ -201,6 +206,66 @@ class SeasonRates:
     vsc_laps: float
     dnf_prob: float
     races: int
+
+
+PASS_PRIOR_SEASONS = 2  # shrinkage: pseudo-seasons at the median pass rate
+
+
+@functools.cache
+def _pass_rates_by_race() -> list[tuple[int, int, float]]:
+    """(year, circuit_key, on-track passes per 1000 green car-laps) for every warehouse race:
+    order swaps between consecutive green laps of cars that didn't pit on either lap (lap 1-2
+    excluded). Counts depend on pace spread as well as the circuit, hence the shrinkage."""
+    con = connect()
+    try:
+        races = con.execute(
+            "SELECT session_key, year, circuit_key FROM races WHERE session_name = 'Race'"
+        ).fetchall()
+        out = []
+        for sk, year, ck in races:
+            rows = con.execute(
+                """SELECT driver_number, lap_number, position,
+                          coalesce(pit_in, false) OR coalesce(pit_out, false),
+                          coalesce(neutralised, '') NOT IN ('', 'false', 'False')
+                   FROM laps WHERE session_key = ? AND position IS NOT NULL""",
+                [sk],
+            ).fetchall()
+            by_lap: dict[int, dict[int, tuple]] = {}
+            for d, n, pos, pit, neut in rows:
+                by_lap.setdefault(n, {})[d] = (pos, pit, neut)
+            passes = car_laps = 0
+            for n, cur in by_lap.items():
+                prev = by_lap.get(n - 1)
+                if n < 3 or not prev:
+                    continue
+                ok = [
+                    d
+                    for d in cur
+                    if d in prev and not (cur[d][1] or prev[d][1] or cur[d][2] or prev[d][2])
+                ]
+                if len(ok) < 10:
+                    continue
+                car_laps += len(ok)
+                for i, a in enumerate(ok):
+                    for b in ok[i + 1 :]:
+                        if (prev[a][0] - prev[b][0]) * (cur[a][0] - cur[b][0]) < 0:
+                            passes += 1
+            if car_laps and ck is not None:
+                out.append((year, int(ck), 1000 * passes / car_laps))
+        return out
+    finally:
+        con.close()
+
+
+def circuit_pass_rel(circuit_key: int | None, year: int) -> float:
+    """This circuit's pass rate relative to the median, from seasons before `year`, shrunk
+    toward 1 (PASS_PRIOR_SEASONS pseudo-seasons at the median). 1.0 for new circuits."""
+    rows = [(y, ck, r) for y, ck, r in _pass_rates_by_race() if y < year]
+    if circuit_key is None or not rows:
+        return 1.0
+    median = statistics.median(r for _, _, r in rows)
+    mine = [r / median for _, ck, r in rows if ck == int(circuit_key)]
+    return (sum(mine) + PASS_PRIOR_SEASONS) / (len(mine) + PASS_PRIOR_SEASONS)
 
 
 def _season_rates(con, year: int, exclude_meeting: int) -> SeasonRates:
@@ -432,6 +497,7 @@ def build_inputs(
     circuit_key = con.execute(
         "SELECT any_value(circuit_key) FROM races WHERE meeting_key = ?", [meeting_key]
     ).fetchone()[0]
+    pass_rel = circuit_pass_rel(circuit_key, year)
     circuit = fetch_circuit(int(circuit_key), year) if circuit_key else None
     if circuit and circuit.pit_loss:
         pit_green, pit_sc, pit_vsc = (
@@ -467,4 +533,5 @@ def build_inputs(
         pit_loss_vsc=pit_vsc,
         sc_laps=rates.sc_laps,
         vsc_laps=rates.vsc_laps,
+        pass_rel=pass_rel,
     )

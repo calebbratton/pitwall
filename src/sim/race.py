@@ -16,7 +16,7 @@ Per simulated race:
   DNF        off by default: retirements are unpredictable noise for a pace model
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -43,6 +43,10 @@ class SimParams:
     start_noise: float = 2.0
     grid_spacing: float = 0.3  # s per grid slot at the end of lap 1 (before the shuffle)
     pass_threshold: float = 1.2  # s/lap advantage for a 50% pass chance (tuned; grid edge)
+    # Per-circuit passing: threshold x pass_rel ** -alpha (pass_rel = the circuit's on-track
+    # pass rate vs the median, earlier seasons). Tested 2026-10-01 (alpha 0/0.5/1/1.5, 2025-26,
+    # 4000 sims): no gain (rank corr flat, log-loss 1.018 -> 1.017-1.019), so off.
+    circuit_pass_alpha: float = 0.0
     pass_scale: float = 0.2  # logistic width of the pass curve
     min_gap: float = 0.4  # s, closest a held car can follow
     dirty_air: float = 0.2  # s lost per lap stuck behind a car
@@ -133,6 +137,8 @@ def simulate(
 ) -> Prediction:
     rng = np.random.default_rng(seed)
     p = params or SimParams()
+    if p.circuit_pass_alpha and inputs.pass_rel != 1.0:
+        p = replace(p, pass_threshold=p.pass_threshold * inputs.pass_rel ** (-p.circuit_pass_alpha))
     n, laps = len(inputs.drivers), inputs.laps
     pace = race_pace(inputs, p)[None, :]  # [1, n]
     grid = np.array([d.grid for d in inputs.drivers], dtype=float)

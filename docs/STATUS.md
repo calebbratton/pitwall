@@ -81,6 +81,13 @@ data/warehouse/undercut_attempts.jsonl), logistic regression, leave-one-race-out
 Next for the alert stream: factual alerts (rejoin position, oldest tyres, fastest lap, rain),
 LLM phrasing, UI panel.
 
+## Model work log (2026-10-01, autonomous)
+- Per-circuit overtaking (inputs.circuit_pass_rel, SimParams.circuit_pass_alpha): passes per 1000
+  green car-laps measured for every race 2023-26 (Monaco/Budapest ~0.8x median, Shanghai/Sakhir
+  ~1.5x, but single seasons are noisy). In the pre-race sim: no gain on 2025-26 (log-loss
+  1.018 vs 1.017-1.019, rank corr flat) - the sim rarely passes anyway. Kept off; the rates
+  remain for like-track work.
+
 ## Next (in order)
 1. **Watch FP1 (Fri 2 Oct 04:30 UTC) on the live path** and fix whatever the real feed reveals
    (first live session through the new code). Recordings become fixtures for replays/tests.
