@@ -43,7 +43,7 @@ def race_context(monitor: RaceMonitor, sims: int = 2000) -> dict[str, Any]:
     pit_loss = monitor.pit_loss
     loss = (pit_loss.green, pit_loss.safety_car) if pit_loss else (22.0, 13.5)
     curves = season_curves(snapshot.year) if snapshot.year else {}
-    state = race_state(monitor, snapshot, pit_loss=loss, curves=curves)
+    state = race_state(monitor, snapshot, pit_loss=loss, curves=curves, age_curves=bool(curves))
     prediction = simulate_from(state, sims=sims)
     gaps = {d.tla: d.gap_to_leader_s for d in snapshot.drivers}
     context: dict[str, Any] = {

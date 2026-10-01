@@ -71,7 +71,8 @@ def _solve(X: np.ndarray, y: np.ndarray, curve_columns: list[int]):
     return beta, identified
 
 
-def fit_curves(con, year: int) -> dict[str, CompoundCurve]:
+def fit_curves(con, year: int, exclude: tuple[int, ...] = ()) -> dict[str, CompoundCurve]:
+    """`exclude`: race session keys to leave out (leave-one-race-out validation)."""
     rows = con.execute(
         """SELECT l.session_key, r.location, l.driver_number, l.lap_number, l.compound,
                   l.tyre_age, l.lap_time
@@ -79,6 +80,7 @@ def fit_curves(con, year: int) -> dict[str, CompoundCurve]:
            WHERE r.year = ? AND r.session_name = 'Race' AND l.tyre_age IS NOT NULL""",
         [year],
     ).fetchall()
+    rows = [r for r in rows if r[0] not in exclude]
     data = []
     for sk, location, driver, lap, compound, age, time in rows:
         c = c_number(year, location, compound)
@@ -144,6 +146,26 @@ def season_curves(year: int) -> dict[str, CompoundCurve]:
         return fit_curves(connect(), year)
     except Exception:  # noqa: BLE001 — live tools must work without the warehouse
         return {}
+
+
+def loss_by_age(curve: CompoundCurve, max_age: int = 70) -> list[float]:
+    """Seconds lost vs a fresh set at each tyre age 0..max_age: linear between the trusted
+    bands' midpoints, then the settled slope (late_slope) beyond the data."""
+    pts = [(0.0, 0.0)] + [
+        (a + (BAND - 1) / 2, loss) for a, loss, n in curve.bands if n >= MIN_BAND_LAPS and a > 0
+    ]
+    pts.sort()
+    slope = late_slope(curve) or 0.03
+    out = []
+    for age in range(max_age + 1):
+        if age >= pts[-1][0]:
+            out.append(pts[-1][1] + slope * (age - pts[-1][0]))
+            continue
+        for (x0, y0), (x1, y1) in itertools.pairwise(pts):
+            if x0 <= age <= x1:
+                out.append(y0 + (y1 - y0) * (age - x0) / (x1 - x0))
+                break
+    return [round(v, 4) for v in out]
 
 
 def late_slope(curve: CompoundCurve) -> float | None:

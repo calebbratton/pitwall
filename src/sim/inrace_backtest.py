@@ -53,7 +53,11 @@ def _race_keys(con, year: int) -> dict[str, int]:
     return dict(rows)
 
 
-def capture(year: int) -> list[Checkpoint]:
+def capture(year: int, age_curves: bool = False) -> list[Checkpoint]:
+    """`age_curves`: age tyres with the season's tyre-age curves, fitted without the race being
+    captured (no leakage)."""
+    from src.models.tyre_curves import fit_curves
+
     con = connect()
     keys = _race_keys(con, year)
     checkpoints: list[Checkpoint] = []
@@ -69,6 +73,7 @@ def capture(year: int) -> list[Checkpoint]:
             if circuit and circuit.pit_loss
             else (22.0, 13.5)
         )
+        curves = fit_curves(con, year, exclude=(race_sk,)) if age_curves else None
         monitor = RaceMonitor()
         status = None
         green_marks: set[int] = set()
@@ -90,7 +95,18 @@ def capture(year: int) -> list[Checkpoint]:
                             kind = "GREEN"
             if kind:
                 try:
-                    taken.append((kind, race_state(monitor, monitor.snapshot(), pit_loss=loss)))
+                    taken.append(
+                        (
+                            kind,
+                            race_state(
+                                monitor,
+                                monitor.snapshot(),
+                                pit_loss=loss,
+                                curves=curves,
+                                age_curves=age_curves,
+                            ),
+                        )
+                    )
                 except NotEnoughData:
                     pass
         for kind, state in taken:
@@ -101,11 +117,11 @@ def capture(year: int) -> list[Checkpoint]:
     return checkpoints
 
 
-def load_or_capture(year: int, refresh: bool = False) -> list[Checkpoint]:
-    path = CACHE / f"inrace_checkpoints_{year}.pkl"
+def load_or_capture(year: int, refresh: bool = False, age_curves: bool = False) -> list[Checkpoint]:
+    path = CACHE / f"inrace_checkpoints_{year}{'_curves' if age_curves else ''}.pkl"
     if path.exists() and not refresh:
         return pickle.loads(path.read_bytes())
-    checkpoints = capture(year)
+    checkpoints = capture(year, age_curves)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pickle.dumps(checkpoints))
     return checkpoints
@@ -177,9 +193,10 @@ def main() -> None:
     ap.add_argument("--year", type=int, default=2026)
     ap.add_argument("--sims", type=int, default=400)
     ap.add_argument("--refresh", action="store_true", help="re-capture checkpoints")
+    ap.add_argument("--age-curves", action="store_true", help="season tyre-age curves (LORO)")
     args = ap.parse_args()
 
-    checkpoints = load_or_capture(args.year, args.refresh)
+    checkpoints = load_or_capture(args.year, args.refresh, args.age_curves)
     races = sorted({cp.race for cp in checkpoints})
     print(
         f"{len(checkpoints)} checkpoints in {len(races)} races: "

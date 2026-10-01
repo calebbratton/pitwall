@@ -65,6 +65,9 @@ class RaceState:
     # Fresh-tyre pace per compound relative to a reference compound (s/lap, negative = faster),
     # measured in this race (drivers who ran both). Empty = compounds treated as equal.
     offset: dict[str, float] = field(default_factory=dict)
+    # Seconds lost vs a fresh set at each tyre age, per compound label, from the season's
+    # tyre-age curves (by Pirelli C-number). Empty = linear `deg` per lap of age.
+    age_loss: dict[str, list[float]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -90,6 +93,9 @@ class InRaceParams:
 DEFAULT_CALIBRATION = InRaceParams()
 
 
+MAX_TRACKED_AGE = 70  # laps; tyre-age tables run this far
+
+
 class NotEnoughData(ValueError):
     pass
 
@@ -113,6 +119,7 @@ def race_state(
     pit_loss: tuple[float, float] = (22.0, 13.5),
     curves: dict | None = None,
     compound_offsets: bool = False,
+    age_curves: bool = False,
 ) -> RaceState:
     """`curves`: season tyre-age curves by C-number (src/models/tyre_curves.py). When given,
     each car's tyre life is how far its compound is proven to go without dropping off in the
@@ -165,6 +172,21 @@ def race_state(
     if defaulted:
         notes.append(f"default degradation for {', '.join(defaulted)} (too few stints so far)")
 
+    age_loss: dict[str, list[float]] = {}
+    if age_curves and curves and snapshot.year:
+        from src.models.tyre_curves import loss_by_age
+
+        for label in ("SOFT", "MEDIUM", "HARD"):
+            curve = curves.get(c_number(snapshot.year, snapshot.location, label) or "")
+            if curve:
+                age_loss[label] = loss_by_age(curve, MAX_TRACKED_AGE)
+
+    def age_term(compound: str | None, age: int) -> float:
+        table = age_loss.get(compound or "")
+        if table:
+            return table[min(max(age, 0), MAX_TRACKED_AGE)]
+        return deg.get(compound or "", 0.06) * age
+
     # Recent pace per car, tyre-age corrected, relative to the field median.
     pace: dict[str, float] = {}
     pace_compound: dict[str, str | None] = {}
@@ -172,7 +194,7 @@ def race_state(
         recent = [r for r in records if _clean(r)][-RECENT_LAPS:]
         if len(recent) >= 3:
             pace[car] = statistics.median(
-                r.time_s - deg.get(r.compound, 0.06) * r.tyre_age for r in recent
+                r.time_s - age_term(r.compound, r.tyre_age) for r in recent
             )
             pace_compound[car] = recent[-1].compound
     field_median = statistics.median(pace.values()) if pace else 0.0
@@ -212,6 +234,7 @@ def race_state(
         pit_loss_sc=pit_loss[1],
         notes=notes,
         offset=offset,
+        age_loss=age_loss,
     )
 
 
@@ -266,7 +289,6 @@ def simulate_from(
     life = np.array(
         [c.life_laps or state.life.get(c.compound or "", 30) for c in cars], dtype=float
     )[None, :]
-    deg_now = np.array([state.deg.get(c.compound or "", 0.06) for c in cars])[None, :]
     age = np.tile(np.array([c.tyre_age for c in cars], dtype=float), (sims, 1))
 
     # Start from the actual gaps: under an SC, cars stop as they reach the pit entry, before the
@@ -295,7 +317,6 @@ def simulate_from(
         if c.number in plan:
             planned = plan[c.number].lap
             stop_lap[:, i] = planned if planned is not None and planned <= remaining else -1
-    new_deg = np.array([state.deg.get(nc, 0.05) for nc in new_compound])[None, :]
     new_life = np.array([state.life.get(nc, 30) for nc in new_compound], dtype=float)[None, :]
     # Fresh-tyre pace change from switching compound (pace_s is on the current compound).
     new_offset = np.array(
@@ -316,7 +337,18 @@ def simulate_from(
         ),
         (sims, 1),
     )
-    deg = np.tile(deg_now, (sims, 1))
+    # Tyre ageing as a lookup: seconds lost vs a fresh set by (compound, age). Season curves where
+    # given (they capture the early grip loss that makes undercuts work), else linear `deg`.
+    labels = sorted({c.compound or "" for c in cars} | set(new_compound))
+    table = np.array(
+        [
+            state.age_loss.get(lab)
+            or [state.deg.get(lab, 0.06) * a for a in range(MAX_TRACKED_AGE + 1)]
+            for lab in labels
+        ]
+    )
+    cidx = np.tile(np.array([labels.index(c.compound or "") for c in cars]), (sims, 1))
+    new_cidx = np.array([labels.index(nc) for nc in new_compound])[None, :]
     life_now = np.tile(life, (sims, 1))
     running = np.ones((sims, n), dtype=bool)
     neutralised_loss = {
@@ -327,12 +359,13 @@ def simulate_from(
     for lap in range(1, remaining + 1):
         order = np.argsort(T, axis=1)
         cliff = CLIFF_S_PER_LAP2 * np.maximum(age - life_now, 0) ** 1.5
-        lap_time = pace + offset_now + deg * age + cliff + rng.normal(0, p.lap_noise, (sims, n))
+        tyre = table[cidx, np.clip(age, 0, MAX_TRACKED_AGE).astype(int)]
+        lap_time = pace + offset_now + tyre + cliff + rng.normal(0, p.lap_noise, (sims, n))
         pit_now = stop_lap == lap
         loss = neutralised_loss if lap == 1 else state.pit_loss_green
         lap_time = lap_time + np.where(pit_now, loss, 0.0)
         age = np.where(pit_now, 0, age + 1)
-        deg = np.where(pit_now, new_deg, deg)
+        cidx = np.where(pit_now, new_cidx, cidx)
         life_now = np.where(pit_now, new_life, life_now)
         offset_now = np.where(pit_now, new_offset, offset_now)
         new_T = T + lap_time

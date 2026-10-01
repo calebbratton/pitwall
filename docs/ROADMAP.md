@@ -30,6 +30,11 @@ under a rate budget, and are resolved afterwards ("undercut worked, +1"); every 
      the engine's call, then the outcome — viewer vs engine vs race.
   3. Post-race verdict cards per driver strategy (right / wrong / unlucky, with the numbers) and
      one-line "what just happened" after big swings.
+- **MCP server (after the KL race; user idea 2026-10-01):** expose the models as MCP tools —
+  predict_race, who_wins_from_here, pit_review, tyre_life, track_fit, luck_adjusted_result,
+  search_regulations — so any MCP client's own LLM does the talking and we host only compute (no
+  Groq limits). Pull-only: complements the live dashboard, doesn't replace the alert stream.
+  Start local (stdio) for personal use; hosting publicly raises the same data-terms questions.
 - Pre-race order prediction is near its ceiling (qualifying explains most of it): frozen as a
   panel, not the focus.
 

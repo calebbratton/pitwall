@@ -92,7 +92,11 @@ def sc_call_alert(report: PitCallReport, top: int = 10) -> Alert | None:
 class AlertEngine:
     """Per live session. `on_lap` after each completed leader lap, `on_pit_calls` at SC/VSC."""
 
-    def __init__(self) -> None:
+    def __init__(self, curves: dict | None = None) -> None:
+        """`curves`: season tyre-age curves (fitted without this race in backtests); loaded for
+        the session's year on first use otherwise. They carry the fresh-tyre advantage that
+        makes an undercut work."""
+        self.curves = curves
         self.alerts: dict[str, Alert] = {}
         self._streak: dict[str, int] = {}  # candidate id -> consecutive laps the condition held
 
@@ -113,8 +117,14 @@ class AlertEngine:
         if snap.track_status != "GREEN" or not snap.is_race:
             self._streak.clear()
             return events
+        if self.curves is None and snap.year:
+            from src.models.tyre_curves import season_curves
+
+            self.curves = season_curves(snap.year)
         try:
-            state = race_state(monitor, snap, pit_loss=pit_loss)
+            state = race_state(
+                monitor, snap, pit_loss=pit_loss, curves=self.curves, age_curves=bool(self.curves)
+            )
         except NotEnoughData:
             return events
         if state.laps_remaining < UNDERCUT_MIN_LAPS_LEFT:
@@ -254,10 +264,16 @@ def backtest(year: int = 2026, quiet: bool = False) -> dict:
     from src.livetiming.archive import ArchiveSession, list_sessions
     from src.livetiming.monitor import STRATEGY_TOPICS, _circuit_for
     from src.livetiming.strategy import pit_calls
+    from src.models.tyre_curves import fit_curves
+    from src.sim.inrace_backtest import _race_keys
+    from src.warehouse.queries import connect
 
+    con = connect()
+    keys = _race_keys(con, year)
     every: list[Alert] = []
     per_race = {}
     for race in list_sessions(year):
+        race_sk = keys.get(race["date"])
         messages = list(ArchiveSession(race["path"]).messages(STRATEGY_TOPICS))
         circuit = _circuit_for(messages)
         loss = (
@@ -266,7 +282,8 @@ def backtest(year: int = 2026, quiet: bool = False) -> dict:
             else (22.0, 13.5)
         )
         monitor = RaceMonitor(pit_loss=circuit.pit_loss if circuit else None)
-        engine = AlertEngine()
+        # Curves fitted without this race: no hindsight about its tyres.
+        engine = AlertEngine(curves=fit_curves(con, year, exclude=(race_sk,)) or {})
         last_lap = None
         for m in messages:
             for e in monitor.feed(m):
