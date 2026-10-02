@@ -15,12 +15,14 @@ from typing import Any
 from src.livetiming.snapshot import _lap_s
 from src.sim import prediction_log
 from src.sim.calibrate import DEFAULT_CALIBRATION, apply
-from src.sim.inputs import build_inputs, weekend_sessions
+from src.sim.inputs import build_inputs, penalised_grid, weekend_sessions
 from src.sim.race import simulate
 from src.sim.wet import simulate_weather
 from src.warehouse.queries import connect
 
 log = logging.getLogger(__name__)
+
+PENALTIES = "reference/grid_penalties_{year}.json"
 
 WEEKEND_SESSIONS = (
     "Practice 1",
@@ -194,6 +196,25 @@ def live_qualifying(monitor) -> tuple[dict[int, float], dict[int, int], float] |
     return deltas, grid, pole
 
 
+def known_penalties(
+    year: int, location: str, numbers: dict[str, int], path: str | None = None
+) -> tuple[dict[int, int], set[int]]:
+    """(grid-place penalties, pit-lane starters) by car number from the penalties file for
+    this weekend; TLAs not in `numbers` (TLA -> car) are skipped."""
+    file = Path(path or PENALTIES.format(year=year))
+    if not file.exists():
+        return {}, set()
+    table = {k.casefold(): v for k, v in json.loads(file.read_text()).items()}
+    entry = table.get(location.casefold()) or {}
+    penalties = {
+        numbers[t.upper()]: int(n)
+        for t, n in (entry.get("penalties") or {}).items()
+        if t.upper() in numbers
+    }
+    pit_lane = {numbers[t.upper()] for t in entry.get("pit_lane") or [] if t.upper() in numbers}
+    return penalties, pit_lane
+
+
 def pre_q3_prediction_event(monitor) -> dict[str, Any] | None:
     """`on_q3` hook: the prediction made as Q3 starts (grid not final), logged once."""
     snapshot = monitor.snapshot()
@@ -205,6 +226,15 @@ def pre_q3_prediction_event(monitor) -> dict[str, Any] | None:
         log.warning("pre-Q3 prediction skipped: timing or race distance unknown")
         return None
     deltas, grid, pole = live
+    drivers = monitor.state.topics.get("DriverList", {})
+    numbers = {
+        str(d.get("Tla", "")).upper(): int(n)
+        for n, d in drivers.items()
+        if str(n).isdigit() and isinstance(d, dict)
+    }
+    penalties, pit_lane = known_penalties(snapshot.year, snapshot.location, numbers)
+    if penalties or pit_lane:
+        grid = penalised_grid(grid, penalties, pit_lane)
     meeting = monitor.state.topics.get("SessionInfo", {}).get("Meeting", {})
     country = (meeting.get("Country") or {}).get("Name") or ""
     try:
@@ -224,6 +254,11 @@ def pre_q3_prediction_event(monitor) -> dict[str, Any] | None:
         return None
     prediction["notes"] = [
         "before Q3: from Q1/Q2 times and the provisional order; the grid isn't final",
+        *(
+            [f"known grid penalties applied ({PENALTIES.format(year=snapshot.year)})"]
+            if penalties or pit_lane
+            else []
+        ),
         *[n for n in prediction["notes"] if not n.startswith("before the start")],
     ]
     prediction_log.save(snapshot.year, snapshot.location, "pre-Q3", prediction)

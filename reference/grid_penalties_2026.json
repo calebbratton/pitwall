@@ -1,0 +1,8 @@
+{
+  "_note": "Grid penalties known before qualifying ends, keyed by OpenF1/feed location; applied to the provisional order by the pre-Q3 prediction (the grid stage reads the official grid, penalties included). Places per driver TLA; pit_lane = pit-lane starters. Enter from FIA decision documents; record the source.",
+  "Kuala Lumpur": {
+    "penalties": {"HAD": 5},
+    "pit_lane": [],
+    "_source": "user, 2026-10-02 (5-place grid penalty)"
+  }
+}
