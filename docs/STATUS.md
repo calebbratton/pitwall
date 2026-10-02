@@ -149,6 +149,10 @@ has opt-in browser notifications (battle, SC call, undercut). Recommend-only: F1
 - Done: "your call" mode (UI), post-race verdict cards (`python -m src.sim.verdicts`,
   `GET /api/race/verdicts`, `GET /api/race/list`, UI REVIEW tab; first load of a race takes
   minutes, then cached in data/verdicts/).
+- Stewards' decisions in the chat (2026-10-02): `scripts/ingest_decisions.py` fetches the FIA's
+  per-car rulings for the supported seasons; penalty / incident questions route to "rules" and
+  get the matching rulings next to the regulations (real rulings or precedent, cited by doc).
+  Idea: poll for new rulings during a weekend and push them as alerts ("Stewards: HAM warning").
 - Next product item: phone notifications (ntfy or an installable web app - user's call, text
   would go through a third party with ntfy).
 

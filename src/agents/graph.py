@@ -29,6 +29,7 @@ from src.agents.state import (
     ToolResult,
 )
 from src.llm.factory import Role, get_chat_model, with_schema
+from src.rag.decisions import STEWARDING, DecisionIndex
 from src.rag.glossary import expand_query
 from src.rag.index import RegulationIndex
 from src.rag.sources import source_for_race
@@ -39,6 +40,8 @@ from src.tools.telemetry import build_telemetry_tools, key_race_events, race_sum
 MAX_FETCH_ROUNDS = 4
 RULES_PER_QUERY = 4
 MAX_RULES = 5
+MAX_DECISIONS = 3  # stewards' rulings added to the rules for penalty / incident questions
+DECISION_CITATION = "Stewards' decision"
 RRF_K = 60  # standard reciprocal-rank-fusion constant
 # Groq free tier caps input at ~7-8K tokens/minute per model (~4 chars/token), so every prompt
 # that grows with data has a character budget.
@@ -94,6 +97,7 @@ def build_graph(
     checkpointer: BaseCheckpointSaver | None = None,
     today: date | None = None,
     seasons: list[int] | None = None,
+    decisions: DecisionIndex | None = None,
 ):
     models = models or {}
 
@@ -281,6 +285,13 @@ def build_graph(
                 )
         ranked = sorted(scores, key=scores.__getitem__, reverse=True)[:MAX_RULES]
         rules = [rules_by_id[chunk_id] for chunk_id in ranked]
+        if decisions is not None and any(STEWARDING.search(q) for q in queries):
+            rulings = decisions.search(
+                state["current_query"], seasons or [reg["season"]], k=MAX_DECISIONS
+            )
+            rules += [
+                RetrievedRule(article=d.key, citation=d.citation, text=d.text()) for d in rulings
+            ]
         return {
             "retrieved_rules_text": rules,
             "evaluation_steps": [
@@ -297,13 +308,24 @@ def build_graph(
             {"tool": r["tool"], "args": r["args"], "result": _clip(r["result"], per_result)}
             for r in results
         ]
-        rules = "\n\n".join(f"[{r['article']}] {r['text']}" for r in state["retrieved_rules_text"])
+        retrieved = state["retrieved_rules_text"]
+        rules = "\n\n".join(
+            f"[{r['article']}] {r['text']}"
+            for r in retrieved
+            if not r["citation"].startswith(DECISION_CITATION)
+        )
+        rulings = "\n\n".join(
+            f"[{r['article']}] {r['text']}"
+            for r in retrieved
+            if r["citation"].startswith(DECISION_CITATION)
+        )
         prompt = prompts.ANALYST.format(
             question=state["current_query"],
             race=_race_label(state) if state["route"].mode == "race" else "n/a (rules question)",
             telemetry=json.dumps(telemetry, separators=(",", ":")) if telemetry else "(none)",
             reg_source=f"{reg['season']} Sporting Regulations, Issue {reg['issue']}",
             rules=rules or "(none retrieved)",
+            decisions=rulings or "(none retrieved)",
         )
         analysis: Analysis = with_schema(model("analyst"), Analysis).invoke(
             [SystemMessage(prompt), HumanMessage(state["current_query"])]
@@ -339,8 +361,12 @@ def build_graph(
             lines.append(f"- {f.claim}{evidence}{refs}")
         if analysis.caveats:
             lines += ["", "Caveats:", *(f"- {c}" for c in analysis.caveats)]
-        if cited:
-            lines += ["", "Regulations:", *(f"- {c}" for c in cited.values())]
+        regs = [c for c in cited.values() if not c.startswith(DECISION_CITATION)]
+        rulings = [c for c in cited.values() if c.startswith(DECISION_CITATION)]
+        if regs:
+            lines += ["", "Regulations:", *(f"- {c}" for c in regs)]
+        if rulings:
+            lines += ["", "Stewards' decisions:", *(f"- {c}" for c in rulings)]
         return {"messages": [AIMessage("\n".join(lines))], "evaluation_steps": steps}
 
     # --- edges ---------------------------------------------------------------------------

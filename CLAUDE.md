@@ -146,6 +146,11 @@ skips telemetry and an error path (ambiguous/future race) straight to `synthesiz
   `section_b` (2026+, `B6.3.6`). The 2026 PDF renders the "ff" ligature as `‘`/`W`; it's fixed
   in `_fix_ligatures`. Appendices are not indexed.
 - One chunk per clause (long ones split into parts); `RegChunk.citation` is what answers must cite.
+- Stewards' decisions (`src/rag/decisions.py`): per-car rulings ("Infringement/Decision - Car N")
+  scraped from the FIA documents site into `data/decisions/` and searched in memory (not in
+  Qdrant, so the running API can pick up new ones). `retrieve` adds up to 3 when the question or
+  router queries look like a penalty/incident question; the analyst cites them by key
+  ("Doc 26, 2026 Bahrain Grand Prix In Malaysia") and `synthesize` lists them separately.
 - `src/rag/glossary.py` rewrites paddock jargon into regulation vocabulary ("red flag" →
   "suspension", "undercut" → "pit stop tyre change"). Substitute, don't append: appended words
   dilute the embedding. `retrieve` merges all query variants with reciprocal rank fusion.
@@ -181,6 +186,7 @@ skips telemetry and an error path (ambiguous/future race) straight to `synthesiz
 uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e ".[dev]"
 python scripts/ingest_regulations.py   # download + chunk + index FIA regs (~minutes)
+python scripts/ingest_decisions.py     # FIA stewards' rulings (incremental; safe while the API runs)
 python scripts/record_fixtures.py --year 2024 --place Monaco --drivers 4 81 16
 python -m src.chat --trace            # chat in the terminal (uses Groq)
 uvicorn src.api:app --reload --port 8000  # API for pitwall-ui

@@ -64,7 +64,7 @@ def _analysis(*articles: str) -> Analysis:
     )
 
 
-def _build(router, fetcher=None, analyst=None, index=None, checkpointer=None):
+def _build(router, fetcher=None, analyst=None, index=None, checkpointer=None, decisions=None):
     models = {
         "router": router,
         "fetcher": fetcher or Scripted([]),
@@ -76,6 +76,7 @@ def _build(router, fetcher=None, analyst=None, index=None, checkpointer=None):
         models=models,
         checkpointer=checkpointer,
         today=date(2026, 9, 29),
+        decisions=decisions,
     )
 
 
@@ -260,3 +261,63 @@ def test_seasons_outside_the_window_are_declined():
     state = _ask(graph, "Monaco 2019 strategy?")
     assert "covers the 2026 and 2025 seasons" in state["messages"][-1].content
     assert analyst.calls == []
+
+
+class FakeDecisions:
+    def __init__(self):
+        self.queries: list[tuple] = []
+
+    def search(self, query, seasons, k=3):
+        from src.rag.decisions import StewardsDecision
+
+        self.queries.append((query, seasons))
+        return [
+            StewardsDecision(
+                2026,
+                "2026 Test Grand Prix",
+                26,
+                "Infringement - Car 44 - Impeding of Car 5",
+                "u",
+                "p",
+                "Lewis Hamilton",
+                "Ferrari",
+                "Free Practice 2",
+                "Impeded car 5.",
+                "Article B4.1.1",
+                "Warning",
+                "Slow on the racing line.",
+            )
+        ]
+
+
+def test_penalty_question_cites_stewards_decisions_separately():
+    def route():
+        return Scripted(
+            [
+                RouteDecision(
+                    mode="rules", focus="impeding", regulation_queries=["impedes another driver"]
+                )
+            ]
+        )
+
+    analyst = Scripted([_analysis("B6.3.6", "Doc 26, 2026 Test Grand Prix", "Doc 99, Made Up")])
+    decisions = FakeDecisions()
+    graph = _build(route(), analyst=analyst, index=FakeIndex(["B6.3.6"]), decisions=decisions)
+    state = _ask(graph, "Should Hamilton get a penalty for impeding Bortoleto in FP2?")
+    answer = state["messages"][-1].content
+    assert decisions.queries and decisions.queries[0][0].startswith("Should Hamilton")
+    assert "Stewards' decisions:\n- Stewards' decision: 2026 Test Grand Prix, Doc 26" in answer
+    assert "Regulations:\n- 2026 Sporting Regulations (Issue 8), Article B6.3.6" in answer
+    assert "Doc 99" not in answer
+
+    other = FakeDecisions()
+    graph = _build(
+        Scripted(
+            [RouteDecision(mode="rules", focus="tyres", regulation_queries=["tyre specifications"])]
+        ),
+        analyst=Scripted([_analysis("B6.3.6")]),
+        index=FakeIndex(["B6.3.6"]),
+        decisions=other,
+    )
+    _ask(graph, "What is the two-compound rule?")
+    assert other.queries == []

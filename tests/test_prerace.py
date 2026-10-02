@@ -1,5 +1,3 @@
-
-
 def test_known_penalties_maps_tlas_to_cars(tmp_path):
     from src.sim.prerace import known_penalties
 

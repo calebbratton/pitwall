@@ -31,6 +31,7 @@ from src.livetiming.archive import ArchiveSession, list_sessions
 from src.livetiming.monitor import replay
 from src.livetiming.session import SessionRegistry
 from src.llm.transcribe import RadioTranscriber
+from src.rag.decisions import DecisionIndex
 from src.rag.index import RegulationIndex
 from src.seasons import out_of_scope_message, supported_seasons
 from src.sim.inrace import NotEnoughData
@@ -92,6 +93,7 @@ def _default_graph():
         index,
         checkpointer=memory_checkpointer(),
         seasons=supported_seasons(),
+        decisions=DecisionIndex(),
     )
     return graph, index.close
 

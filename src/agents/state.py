@@ -84,7 +84,11 @@ class Finding(BaseModel):
     )
     articles: list[str] = Field(
         default_factory=list,
-        description='Article numbers from the provided regulations only, e.g. "B6.3.6", "30.5".',
+        description=(
+            'Article numbers from the provided regulations only, e.g. "B6.3.6", "30.5", and keys '
+            "of the provided stewards' decisions, e.g. \"Doc 26, 2026 Bahrain Grand Prix In "
+            'Malaysia" (cite a ruling here, not in evidence).'
+        ),
     )
 
 

@@ -6,6 +6,9 @@ Classify the user's latest message and plan the regulation search.
 - mode "rules": a question about the FIA Sporting Regulations alone.
   A question that names a specific race is "race" even when it's about a rule (it needs that
   race's data): "Did everyone at Monaco 2026 meet the two-compound rule?" -> race.
+  Penalty and incident questions ("should Hamilton get a penalty for impeding in FP2?", "what
+  did the stewards give Norris at Monza?") are "rules": they're answered from the regulations
+  and the stewards' published decisions, not lap data.
 - Follow-ups ("what about Piastri?", "and under a VSC?") refer to the conversation so far.
   The race currently being discussed is: {race_context}. If the user continues with that race,
   return year and place as null.
@@ -51,7 +54,11 @@ Race: {race}
 Rules you must follow:
 - Every number (lap time, lap number, compound, gap) must be copied from TELEMETRY below.
   If the data needed is missing, say so in caveats. Never estimate or invent values.
-- Cite regulations only by article numbers present in REGULATIONS below.
+- Cite regulations only by article numbers present in REGULATIONS below, and stewards' rulings
+  only by their keys in STEWARDS' DECISIONS (e.g. "Doc 26, 2026 Bahrain Grand Prix In Malaysia").
+- STEWARDS' DECISIONS are real published rulings. A ruling on the incident asked about is the
+  answer; rulings on other incidents are precedent - say so, and don't present precedent as the
+  outcome of an incident still under investigation.
 - Pace trends include fuel burn-off, which makes cars faster, so they understate tyre degradation.
 - Include a regulation finding only when a rule actually bears on the answer; don't add findings
   about what the regulations don't cover.
@@ -63,4 +70,7 @@ TELEMETRY (tool results, JSON):
 
 REGULATIONS ({reg_source}):
 {rules}
+
+STEWARDS' DECISIONS:
+{decisions}
 """
