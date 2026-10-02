@@ -83,3 +83,60 @@ def test_stewarding_trigger():
     assert STEWARDING.search("Should Hamilton get a penalty for impeding Bortoleto?")
     assert STEWARDING.search("what did the stewards decide")
     assert not STEWARDING.search("Could McLaren have undercut on lap 30?")
+
+
+def test_grid_penalties_from_this_weekends_rulings():
+    from datetime import UTC, datetime
+
+    from src.rag.decisions import StewardsDecision, grid_penalties
+
+    def ruling(number, title, decision, published):
+        return StewardsDecision(
+            2026,
+            "2026 Test Grand Prix",
+            number,
+            title,
+            "u",
+            published,
+            "",
+            "",
+            "",
+            "",
+            "",
+            decision,
+            "",
+        )
+
+    records = [
+        ruling(
+            17,
+            "Infringement - Car 6 - Changes to PU elements",
+            "Drop of 5 grid positions for the next Race in which the driver participates.",
+            "02.10.26 10:00",
+        ),
+        ruling(
+            30,
+            "Infringement - Car 6 - Impeding of Car 5",
+            "Drop of 3 grid positions for the next Race in which the driver participates.",
+            "03.10.26 11:00",
+        ),
+        ruling(
+            19,
+            "Infringement - Car 41 - Changes to PU elements",
+            "The driver is required to start the Race from the pit lane.",
+            "02.10.26 10:00",
+        ),
+        ruling(
+            26, "Infringement - Car 44 - Impeding of Car 5", "Driver: Warning.", "02.10.26 14:22"
+        ),
+        ruling(
+            60,
+            "Infringement - Car 10 - Impeding",
+            "Drop of 3 grid positions for the next Race.",
+            "20.09.26 15:00",
+        ),
+    ]
+    drops, pit_lane, notes = grid_penalties(records, datetime(2026, 10, 3, 12, 0, tzinfo=UTC))
+    assert drops == {6: 8}  # PU + impeding add up; last event's ruling is out of the window
+    assert pit_lane == {41}
+    assert len(notes) == 3 and notes[0].startswith("Doc 17: Infringement - Car 6")

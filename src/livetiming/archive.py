@@ -76,7 +76,7 @@ def list_sessions(year: int, session: str = "Race") -> list[dict[str, str]]:
         {"path": s["Path"], "meeting": m.get("Name", ""), "date": s.get("StartDate", "")[:10]}
         for m in index["Meetings"]
         for s in m["Sessions"]
-        if s.get("Name") == session
+        if s.get("Name") == session and s.get("Path")  # no Path until the session has run
     ]
 
 

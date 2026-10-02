@@ -13,6 +13,7 @@ PDFs are cached in data/decisions/pdf/, parsed records in data/decisions/records
 import json
 import re
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 from html import unescape
 from pathlib import Path
 
@@ -336,3 +337,46 @@ class DecisionIndex:
             ):
                 score[i] = score.get(i, 0.0) + 1 / (RRF_K + rank)
         return [self.records[i] for i in sorted(score, key=score.__getitem__, reverse=True)[:k]]
+
+
+# --- grid penalties --------------------------------------------------------------------
+
+_GRID_DROP = re.compile(
+    r"Drop of (\d+) grid positions? for the next (?:Sprint/)?Race", re.IGNORECASE
+)
+_PIT_LANE = re.compile(r"start (?:the (?:Sprint|Race) )?from the pit lane", re.IGNORECASE)
+WEEKEND = timedelta(days=4)
+
+
+def _published(r: StewardsDecision) -> datetime | None:
+    try:
+        # The listing's times are CET/CEST; UTC+1 is close enough for a 4-day window.
+        return datetime.strptime(r.published + " +0100", "%d.%m.%y %H:%M %z")
+    except ValueError:
+        return None
+
+
+def grid_penalties(
+    records: list[StewardsDecision], now: datetime
+) -> tuple[dict[int, int], set[int], list[str]]:
+    """Grid drops and pit-lane starts by car number from rulings published this weekend (the
+    WEEKEND before `now`, timezone-aware),
+    with a note per ruling. Drops for one car add up (e.g. PU elements + impeding). Penalties
+    carried over from an earlier event ("next Race" after a race) aren't picked up."""
+    drops: dict[int, int] = {}
+    pit_lane: set[int] = set()
+    notes: list[str] = []
+    for r in records:
+        when = _published(r)
+        car = RULING.match(r.title)
+        if not (when and car and now - WEEKEND <= when <= now + timedelta(hours=2)):
+            continue
+        n = int(car[2])
+        if m := _GRID_DROP.search(r.decision):
+            drops[n] = drops.get(n, 0) + int(m[1])
+        elif _PIT_LANE.search(r.decision):
+            pit_lane.add(n)
+        else:
+            continue
+        notes.append(f"Doc {r.number}: {r.title} - {r.decision.split('.')[0]}")
+    return drops, pit_lane, notes

@@ -8,7 +8,7 @@ returns a `prediction` event in the same shape as the in-race ones, with lap 0.
 
 import json
 import logging
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -215,6 +215,29 @@ def known_penalties(
     return penalties, pit_lane
 
 
+def weekend_penalties(
+    year: int, location: str, numbers: dict[str, int], now: datetime | None = None
+) -> tuple[dict[int, int], set[int], list[str]]:
+    """Grid penalties for this race known so far: the stewards' rulings published this weekend
+    (fetched first; FIA site errors fall back to what's already ingested), with the manual
+    penalties file overriding them per car (for anything the rulings parser misses)."""
+    from src.rag import decisions
+
+    try:
+        records = decisions.ingest([year])
+    except Exception:
+        log.exception("stewards' decisions refresh failed")
+        records = decisions.load_records()
+    drops, pit_lane, notes = decisions.grid_penalties(records, now or datetime.now(UTC))
+    manual, manual_pit = known_penalties(year, location, numbers)
+    for n, places in manual.items():
+        drops[n] = places
+        notes.append(f"car {n}: {places} places ({PENALTIES.format(year=year)})")
+    for n in manual_pit - pit_lane:
+        notes.append(f"car {n}: pit lane ({PENALTIES.format(year=year)})")
+    return drops, pit_lane | manual_pit, notes
+
+
 def pre_q3_prediction_event(monitor) -> dict[str, Any] | None:
     """`on_q3` hook: the prediction made as Q3 starts (grid not final), logged once."""
     snapshot = monitor.snapshot()
@@ -232,7 +255,9 @@ def pre_q3_prediction_event(monitor) -> dict[str, Any] | None:
         for n, d in drivers.items()
         if str(n).isdigit() and isinstance(d, dict)
     }
-    penalties, pit_lane = known_penalties(snapshot.year, snapshot.location, numbers)
+    penalties, pit_lane, penalty_notes = weekend_penalties(
+        snapshot.year, snapshot.location, numbers
+    )
     if penalties or pit_lane:
         grid = penalised_grid(grid, penalties, pit_lane)
     meeting = monitor.state.topics.get("SessionInfo", {}).get("Meeting", {})
@@ -254,11 +279,7 @@ def pre_q3_prediction_event(monitor) -> dict[str, Any] | None:
         return None
     prediction["notes"] = [
         "before Q3: from Q1/Q2 times and the provisional order; the grid isn't final",
-        *(
-            [f"known grid penalties applied ({PENALTIES.format(year=snapshot.year)})"]
-            if penalties or pit_lane
-            else []
-        ),
+        *(f"grid penalty applied: {n}" for n in penalty_notes),
         *[n for n in prediction["notes"] if not n.startswith("before the start")],
     ]
     prediction_log.save(snapshot.year, snapshot.location, "pre-Q3", prediction)
