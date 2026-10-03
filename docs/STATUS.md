@@ -142,6 +142,11 @@ has opt-in browser notifications (battle, SC call, undercut). Recommend-only: F1
 - Post-race chat: review_pit_stop tool (pit review engine) for "was pitting the right call?";
   the review notes rivals who got a cheap SC/VSC stop just before (Madrid NOR lap 15).
 - Live strategy chat: context includes pit-within-3-laps (hazard), undercut chances, battles.
+- Baselines (2026-10-03, `python -m src.sim.baselines`): 15 races of 2026 at the grid stage,
+  luck-adjusted result. Winner log-loss / podium log-loss / favourite won: model 1.294 / 0.237 /
+  9; grid-slot rates (2023-25) 1.428 / 0.288 / 8; LLM (Groq gpt-oss-120b, same numbers + last 3
+  results) 1.725 / 0.292 / 6. Raw result: model 0.770 / 13, grid 1.119 / 11, LLM 1.521 / 8.
+  Caveat: the model's calibration temperatures were fitted on 2026 (in-sample for log-loss).
 - Driver-track affinity tested 2026-10-03, rejected: a driver's qualifying gap to their teammate
   at a circuit, minus their season median, barely repeats there the next year (885 pairs,
   corr 0.04-0.06 vs shuffled-null 95th pct ~0.055) or across like tracks grouped by average pole
