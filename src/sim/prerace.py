@@ -50,13 +50,28 @@ def ensure_weekend(year: int, place: str) -> bool:
     OpenF1 (free, ~30 min after each session ends) and rebuild. True if qualifying is there."""
     if _has_qualifying(year, place):
         return True
+    refresh_warehouse(year)
+    return _has_qualifying(year, place)
+
+
+def refresh_warehouse(year: int) -> int:
+    """Ingest this season's finished weekend sessions that aren't in the warehouse yet, and
+    rebuild if any were added; returns how many. OpenF1 refuses every request while a session
+    is live (free data comes ~30 min after it ends), so that's logged and skipped: callers carry
+    on with what the warehouse has. The API runs this every few minutes on race weekends so
+    practice is already in before qualifying, when OpenF1 is closed again."""
+    from src.tools.openf1 import OpenF1Error
     from src.warehouse.build import build
     from src.warehouse.ingest import ingest
 
-    new = ingest([year], list(WEEKEND_SESSIONS), settle=timedelta(minutes=30))
+    try:
+        new = ingest([year], list(WEEKEND_SESSIONS), settle=timedelta(minutes=30))
+    except OpenF1Error as e:
+        log.warning("warehouse refresh skipped: %s", e)
+        return 0
     if new:
         build()
-    return _has_qualifying(year, place)
+    return len(new)
 
 
 def race_laps(year: int, location: str) -> int | None:

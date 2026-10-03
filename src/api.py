@@ -17,6 +17,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -102,6 +103,22 @@ def _default_transcriber() -> RadioTranscriber | None:
     return RadioTranscriber() if RadioTranscriber.available() else None
 
 
+WAREHOUSE_REFRESH_S = 15 * 60
+
+
+async def _refresh_warehouse_forever() -> None:
+    """Race weekends: pull each finished session into the warehouse soon after OpenF1 frees it,
+    so the pre-Q3 / grid predictions don't need OpenF1 while a session is live (it's closed)."""
+    from src.sim.prerace import refresh_warehouse
+
+    while True:
+        try:
+            await asyncio.to_thread(refresh_warehouse, datetime.now(UTC).year)
+        except Exception:
+            log.exception("warehouse refresh failed")
+        await asyncio.sleep(WAREHOUSE_REFRESH_S)
+
+
 def create_app(
     make_graph: Callable[[], tuple[Any, Callable[[], None]]] = _default_graph,
     make_transcriber: Callable[[], Any] = _default_transcriber,
@@ -116,9 +133,13 @@ def create_app(
         app.state.transcriber = make_transcriber()
         app.state.sessions = SessionRegistry()
         app.state.chat_model = chat_model  # None -> the analyst model from the factory
+        refresher = None
         if os.getenv("PITWALL_LIVE_AUTOSTART", "").strip() in ("1", "true", "yes"):
             _start_live(app)  # race weekends: follow the live feed from server start
+            refresher = asyncio.create_task(_refresh_warehouse_forever())
         yield
+        if refresher:
+            refresher.cancel()
         await app.state.sessions.stop_live()
         cleanup()
         if app.state.transcriber:
