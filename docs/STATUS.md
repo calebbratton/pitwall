@@ -142,6 +142,11 @@ has opt-in browser notifications (battle, SC call, undercut). Recommend-only: F1
 - Post-race chat: review_pit_stop tool (pit review engine) for "was pitting the right call?";
   the review notes rivals who got a cheap SC/VSC stop just before (Madrid NOR lap 15).
 - Live strategy chat: context includes pit-within-3-laps (hazard), undercut chances, battles.
+- Driver-track affinity tested 2026-10-03, rejected: a driver's qualifying gap to their teammate
+  at a circuit, minus their season median, barely repeats there the next year (885 pairs,
+  corr 0.04-0.06 vs shuffled-null 95th pct ~0.055) or across like tracks grouped by average pole
+  speed from MultiViewer outlines (n=1541, corr 0.016 clipped vs null 0.040). Untested: race-pace
+  teammate gaps, corner-speed profiles from CarData.z.
 - Earlier safety-net list: (1) per-circuit overtaking done, no gain; (2) rivals' response
   distribution - covered (pit review uses rivals' real stops; the learned undercut model
   learns real responses; hazard-drawn rival stops in the in-race sim tested, no gain);
