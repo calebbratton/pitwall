@@ -159,6 +159,7 @@ def grid_prediction_event(monitor) -> dict[str, Any] | None:
     qualifying isn't available."""
     snapshot = monitor.snapshot()
     if not (snapshot.year and snapshot.location and snapshot.total_laps):
+        log.warning("grid prediction skipped: year, location or race distance unknown")
         return None
     # The feed's location name can differ from OpenF1's (e.g. a circuit vs a city name); the
     # country name is the fallback.

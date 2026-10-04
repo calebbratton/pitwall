@@ -555,6 +555,9 @@ async def pump(
                 not grid_done
                 and message.topic in ("TimingAppData", "LapCount")
                 and monitor.starting_grid()
+                # The race distance too: after a reconnect the grid can arrive just before
+                # LapCount, and the prediction needs both (Kuala Lumpur 2026 lost it that way).
+                and monitor.snapshot().total_laps
             ):
                 grid_done = True
                 before_start = (monitor.snapshot().current_lap or 0) <= 1

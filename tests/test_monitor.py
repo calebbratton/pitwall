@@ -191,6 +191,10 @@ def _grid_messages(session_name: str = "Race") -> list[Message]:
     ]
 
 
+async def _collect_with(messages, on_grid):
+    return [e async for e in replay(FakeSession(messages), speed=1e6, on_grid=on_grid)]
+
+
 def test_on_grid_fires_once_with_the_official_grid():
     calls = []
 
@@ -208,6 +212,16 @@ def test_on_grid_fires_once_with_the_official_grid():
     calls.clear()
     asyncio.run(collect(_grid_messages("Qualifying")))
     assert calls == []
+
+    # After a reconnect the grid can arrive before the race distance: wait for both.
+    calls.clear()
+    msgs = _grid_messages()
+    grid, lapcount = msgs[2], msgs[1]
+    reordered = [msgs[0], _msg(1, grid.topic, grid.data), _msg(8, lapcount.topic, lapcount.data)]
+    laps_seen = []
+    on_grid_laps = lambda monitor: laps_seen.append(monitor.snapshot().total_laps)
+    asyncio.run(_collect_with(reordered + msgs[3:], on_grid_laps))
+    assert laps_seen == [50]
 
 
 def test_weather_event_and_session_start():
