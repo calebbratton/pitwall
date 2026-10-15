@@ -51,7 +51,8 @@ For "what if they had pitted on lap N / under the safety car / under the VSC?", 
 review_pit_stop with the driver and that lap: for a SC/VSC, a lap the driver ran under it (from
 the key race events, or call it without a lap: it lists their laps under each neutralisation).
 If there were several SC/VSC periods and the question doesn't say which, review each.
-Its verdict and options are simulated from measured data - report them, don't redo the reasoning.
+Its verdict, time_ledger (stop cost vs fresh-tyre gain, measured from the cars that really
+stopped) and simulated options come from measured data - report them, don't redo the reasoning.
 """
 
 ANALYST = """\

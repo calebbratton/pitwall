@@ -52,7 +52,7 @@ VSC_LAP = 15
 STOPS = {"44": 20, "16": VSC_LAP, "63": VSC_LAP, "12": VSC_LAP}  # in-laps
 
 
-def _race() -> list[Message]:
+def _race(stops: dict[str, int] = STOPS) -> list[Message]:
     t = [0.0]
 
     def msg(topic: str, data: dict) -> Message:
@@ -82,14 +82,15 @@ def _race() -> list[Message]:
         if lap == VSC_LAP:
             out.append(msg("TrackStatus", {"Status": "6"}))
         for n, (_, pace) in CARS.items():
-            if STOPS[n] == lap:
+            if stops[n] == lap:
                 out.append(msg("TimingData", {"Lines": {n: {"InPit": True}}}))
         times = {}
         for n, (_, pace) in CARS.items():
-            time = 90 + pace + 0.08 * stint_age[n] + (20 if lap == VSC_LAP else 0)
-            if STOPS[n] == lap:
+            fuel = -0.04 * lap  # burn-off: the tyre fits correct for it
+            time = 90 + pace + fuel + 0.08 * stint_age[n] + (20 if lap == VSC_LAP else 0)
+            if stops[n] == lap:
                 time += 6 if lap == VSC_LAP else 10
-            if STOPS[n] == lap - 1:
+            if stops[n] == lap - 1:
                 time += 6 if lap - 1 == VSC_LAP else 12
             times[n] = time
             elapsed[n] += time
@@ -103,8 +104,8 @@ def _race() -> list[Message]:
                 "GapToLeader": f"+{elapsed[n] - leader:.3f}",
                 "LastLapTime": {"Value": f"1:{times[n] - 60:06.3f}"},
                 "InPit": False,
-                "PitOut": STOPS[n] == lap - 1,
-                "NumberOfPitStops": 1 if lap > STOPS[n] else 0,
+                "PitOut": stops[n] == lap - 1,
+                "NumberOfPitStops": 1 if lap > stops[n] else 0,
             }
             out.append(msg("TimingData", {"Lines": {n: line}}))
             out.append(
@@ -113,7 +114,7 @@ def _race() -> list[Message]:
                     {"Lines": {n: {"Stints": {str(stint[n]): {"TotalLaps": stint_age[n]}}}}},
                 )
             )
-            if STOPS[n] == lap:  # out of the pits on fresh hards
+            if stops[n] == lap:  # out of the pits on fresh hards
                 stint[n] += 1
                 stint_age[n] = 0
                 new = {"Compound": "HARD", "New": "true", "TotalLaps": 0}
@@ -131,7 +132,7 @@ def test_what_if_pitting_under_the_vsc_beats_a_later_green_stop():
     assert r.status == "VSC" and (r.old_compound, r.new_compound) == ("MEDIUM", "HARD")
     assert hypo.expected < actual.expected
     assert hypo.p_better_than_actual > hypo.p_worse_than_actual
-    assert r.verdict.startswith("Pitting on lap 15 would likely have been better")
+    assert r.verdict.startswith("Pitting on lap 15 would have gained HAM about")
     assert any("really finished P" in n for n in r.notes)
 
 
@@ -156,3 +157,25 @@ def test_neutralised_laps_are_the_cheap_stop_windows():
     assert neutralised_laps(monitor.laps["44"]) == [VSC_LAP, VSC_LAP + 1]
     r = what_if_race(_race(), 2026, "HAM", VSC_LAP + 1, sims=50)
     assert r.status == "GREEN" and any("so a normal stop" in n for n in r.notes)
+
+
+def test_time_ledger_when_the_driver_stayed_out_to_the_flag():
+    # Singapore 2026 shape: HAM already stopped (lap 5) and ran to the flag; the others pitted
+    # under the VSC. Fresh tyres were worth 0.08 s/lap per lap of age difference (10 laps).
+    r = what_if_race(_race({**STOPS, "44": 5}), 2026, "HAM", VSC_LAP, sims=200)
+    ledger = r.ledger
+    assert r.branches[0].label == "actual: no more stops"
+    assert ledger["compared_with"] == ["LEC", "RUS", "ANT"]
+    assert ledger["fresh_tyre_gain_s"] == pytest.approx(0.8 * (TOTAL - VSC_LAP - 1), abs=1.5)
+    assert ledger["net_s"] == pytest.approx(
+        ledger["fresh_tyre_gain_s"] - ledger["stop_cost_s"], abs=0.11
+    )
+    assert "(measured from LEC, RUS, ANT)" in r.verdict
+
+
+def test_time_ledger_counts_the_real_later_stop_as_saved():
+    ledger = what_if_race(_race(), 2026, "HAM", VSC_LAP, sims=50).ledger
+    # Older tyres before HAM's lap-20 stop, fresher after it: they cancel out here.
+    assert ledger["fresh_tyre_gain_s"] == pytest.approx(0.0, abs=0.5)
+    assert ledger["saved_real_stop_lap_20_s"] > ledger["stop_cost_s"]
+    assert ledger["would_have_finished_ahead_of"]

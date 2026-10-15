@@ -57,6 +57,7 @@ class PitReview:
     branches: list[Branch]
     verdict: str
     notes: list[str]
+    ledger: dict | None = None  # what-ifs: the stop's cost vs the fresh-tyre gain, in seconds
 
 
 def _clean_times(records: list[LapRecord]) -> list[LapRecord]:
@@ -371,6 +372,125 @@ def review_race(
     )
 
 
+LEDGER_BEFORE_LAPS = 6  # clean laps before the stop window that set each pair's pace gap
+
+
+def _lap_times(recs: list[LapRecord]) -> dict[int, LapRecord]:
+    return {r.lap: r for r in recs if r.time_s is not None}
+
+
+def time_ledger(
+    race: _Race, lap: int, compound: str | None, deg: dict[str, float] | None = None
+) -> dict | None:
+    """Back-of-the-envelope check on a what-if stop, from the laps really driven: what a stop
+    on `lap` cost the cars that made one then, and how much faster they were afterwards
+    relative to the driver (who stayed out) than before. Net > 0: the stop would have gained
+    the driver that many seconds by the flag (ignoring traffic and track position). If the
+    driver really stopped once more later, the hypothetical stop replaces it: that stop's cost
+    is saved, and the laps after it count too (where the driver's tyres were the fresher)."""
+    number = race.number
+    mine = _lap_times(race.full.laps.get(number) or [])
+    later = [in_lap for in_lap, _ in race.stops.get(number, []) if in_lap > lap]
+    if len(later) > 1:
+        return None  # the hypothetical stop would replace one of several: not a simple sum
+    end = max(mine, default=lap)
+    window = {lap - 1, lap, lap + 1}
+    refs = [
+        (car, in_lap, fitted)
+        for car, stops in race.stops.items()
+        for in_lap, fitted in stops
+        if car != number and in_lap in window
+    ]
+    same = [r for r in refs if compound and r[2] == compound]
+    refs = same or refs
+    if not refs:
+        return None
+    tla = {d.number: d.tla for d in race.full.snapshot().drivers}
+
+    def clean(r: LapRecord | None) -> bool:
+        return r is not None and not (r.pit_in or r.pit_out or r.neutralised)
+
+    def wear(r: LapRecord) -> float:
+        return (deg or {}).get(r.compound or "", 0.0) * (r.tyre_age or 0)
+
+    def stop_cost(car: str, in_lap: int, exclude: set[str]) -> float | None:
+        """In-lap + out-lap vs the median of cars that didn't stop on those laps."""
+        theirs = _lap_times(race.full.laps.get(car) or [])
+        if in_lap not in theirs or in_lap + 1 not in theirs:
+            return None
+        others = [
+            laps[in_lap].time_s + laps[in_lap + 1].time_s
+            for other, recs in race.full.laps.items()
+            if other not in exclude
+            and in_lap in (laps := _lap_times(recs))
+            and in_lap + 1 in laps
+            and not any(laps[n].pit_in or laps[n].pit_out for n in (in_lap, in_lap + 1))
+        ]
+        if not others:
+            return None
+        return theirs[in_lap].time_s + theirs[in_lap + 1].time_s - statistics.median(others)
+
+    stopping = {car for car, _, _ in refs}
+    # A real later stop is one the hypothetical one replaces: its cost is saved.
+    saved = stop_cost(number, later[0], {number}) if later else 0.0
+    if saved is None:
+        return None
+    costs, gains, used = [], [], []
+    for car, in_lap, _ in refs:
+        theirs = _lap_times(race.full.laps.get(car) or [])
+        if (cost := stop_cost(car, in_lap, stopping)) is not None:
+            costs.append(cost)
+        # Their pace gap on equal tyres: the lap-time gap before the stop, less the part from
+        # tyre age (measured degradation x age difference) - had the driver stopped too, they'd
+        # have been on tyres as old as the other car's.
+        before = [
+            mine[n].time_s - theirs[n].time_s - wear(mine[n]) + wear(theirs[n])
+            for n in range(lap - LEDGER_BEFORE_LAPS, lap)
+            if clean(mine.get(n)) and clean(theirs.get(n))
+        ]
+        after = [
+            (mine[n].time_s - theirs[n].time_s)
+            for n in range(in_lap + 2, end + 1)
+            if clean(mine.get(n)) and clean(theirs.get(n))
+        ]
+        if len(before) >= 3 and after:
+            base = statistics.median(before)
+            excess = [d - base for d in after]
+            laps_run = max(end - (in_lap + 1), len(after))
+            # Laps without a clean comparison (traffic, flags) count at the average gain.
+            gains.append(sum(excess) + statistics.fmean(excess) * (laps_run - len(after)))
+            used.append(tla.get(car, car))
+    if not costs or not gains:
+        return None
+    cost = statistics.median(costs)
+    gain = statistics.median(gains)
+    net = gain - cost + saved
+
+    # Against the real finishing gaps: who the net time would have put the driver ahead of.
+    final = race.full.snapshot()
+    me = final.driver(number)
+    passed, lost_to = [], []
+    if me.gap_to_leader_s is not None:
+        for d in final.drivers:
+            if d.number == number or d.gap_to_leader_s is None or d.laps_down:
+                continue
+            gap = me.gap_to_leader_s - d.gap_to_leader_s  # > 0: they finished ahead
+            if 0 < gap < net:
+                passed.append(f"{d.tla} ({gap:.1f} s ahead at the flag)")
+            elif net < gap < 0:
+                lost_to.append(f"{d.tla} ({-gap:.1f} s behind at the flag)")
+    return {
+        "compared_with": used,
+        "stop_cost_s": round(cost, 1),
+        "fresh_tyre_gain_s": round(gain, 1),
+        **({f"saved_real_stop_lap_{later[0]}_s": round(saved, 1)} if later else {}),
+        "net_s": round(net, 1),
+        "laps_to_flag": end - lap,
+        "would_have_finished_ahead_of": passed,
+        "would_have_lost_to": lost_to,
+    }
+
+
 def what_if_stop(
     year: int,
     meeting: str,
@@ -429,25 +549,44 @@ def what_if_race(
             "the tyre rule; pick another compound"
         )
     status = {"SAFETY_CAR": "under the SC", "VSC": "under the VSC"}.get(state.status, "")
+    # The direct answer from the laps really driven; its measured stop cost feeds the simulation.
+    ledger = time_ledger(race, lap, new, state.deg)
+    if ledger:
+        state = replace(state, pit_loss_now=ledger["stop_cost_s"])
     hypo_label = f"pit lap {lap}{f' {status}' if status else ''} for {new}"
     branches = _branches(
         race, state, _rival_plans(race, state, lap), [actual, (hypo_label, StopPlan(1, new))], sims
     )
     real, hypo = branches
-    margin = real.expected - hypo.expected
-    if abs(margin) < 0.15:
-        verdict = (
-            f"Pitting on lap {lap} would have made little difference: expected "
-            f"P{hypo.expected:.1f} vs P{real.expected:.1f} for what {tla} really did."
+    if abs(real.expected - hypo.expected) < 0.15:
+        sim = (
+            f"little difference to the expected result (P{hypo.expected:.1f} vs "
+            f"P{real.expected:.1f} for what {tla} really did)"
         )
     else:
-        better = "better" if margin > 0 else "worse"
-        verdict = (
-            f"Pitting on lap {lap} would likely have been {better}: expected P{hypo.expected:.1f}"
-            f" vs P{real.expected:.1f} for what {tla} really did ({actual[0][8:]}); ahead in "
-            f"{hypo.p_better_than_actual:.0%} of simulations, behind in "
-            f"{hypo.p_worse_than_actual:.0%}."
+        sim = (
+            f"expected P{hypo.expected:.1f} vs P{real.expected:.1f} for what {tla} really did "
+            f"({actual[0][8:]}); ahead in {hypo.p_better_than_actual:.0%} of simulations, "
+            f"behind in {hypo.p_worse_than_actual:.0%}"
         )
+    if ledger:
+        net = ledger["net_s"]
+        verdict = (
+            f"Pitting on lap {lap} would have {'gained' if net > 0 else 'lost'} {tla} about "
+            f"{abs(net):.0f} s by the flag: the stop cost {ledger['stop_cost_s']:.1f} s (measured "
+            f"from {', '.join(ledger['compared_with'])}), fresh tyres were worth "
+            f"{ledger['fresh_tyre_gain_s']:.1f} s"
+            + (f", and it replaces the real lap-{later[0][0]} stop" if later else "")
+            + "."
+        )
+        if ledger["would_have_finished_ahead_of"]:
+            ahead = ", ".join(ledger["would_have_finished_ahead_of"])
+            verdict += f" Enough to finish ahead of {ahead}."
+        if ledger["would_have_lost_to"]:
+            verdict += f" It would have dropped behind {', '.join(ledger['would_have_lost_to'])}."
+        verdict += f" Simulated with traffic and track position: {sim}."
+    else:
+        verdict = f"Pitting on lap {lap}, simulated: {sim}."
     finish = race.full.snapshot().driver(tla)
     notes = [
         f"state at the leader's lap {state.lap}, {state.laps_remaining} laps to go",
@@ -477,6 +616,7 @@ def what_if_race(
         branches=branches,
         verdict=verdict,
         notes=[n for n in notes if n],
+        ledger=ledger,
     )
 
 
@@ -506,6 +646,8 @@ def main() -> None:
             f"{b.label:28} {b.expected:8.2f} {b.p_win:6.0%} {b.p_podium:7.0%} "
             f"{b.p_better_than_actual:7.0%} {b.p_worse_than_actual:6.0%}"
         )
+    if r.ledger:
+        print("time ledger:", r.ledger)
     print("\n" + r.verdict)
     for n in r.notes:
         print("-", n)

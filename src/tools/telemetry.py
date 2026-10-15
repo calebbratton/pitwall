@@ -458,6 +458,7 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
                     }
                     for b in r.branches
                 ],
+                **({"time_ledger": r.ledger} if r.ledger else {}),
                 "verdict": r.verdict,
                 "notes": r.notes,
             }
