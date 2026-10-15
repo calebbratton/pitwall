@@ -35,7 +35,12 @@ from src.rag.index import RegulationIndex
 from src.rag.sources import source_for_race
 from src.seasons import out_of_scope_message
 from src.tools.openf1 import OpenF1Client, OpenF1Error
-from src.tools.telemetry import build_telemetry_tools, key_race_events, race_summary
+from src.tools.telemetry import (
+    build_telemetry_tools,
+    key_race_events,
+    race_incidents,
+    race_summary,
+)
 
 MAX_FETCH_ROUNDS = 4
 RULES_PER_QUERY = 4
@@ -208,6 +213,11 @@ def build_graph(
                 ToolResult(tool="key_race_events", args={}, result=events),
                 ToolResult(tool="race_summary", args={}, result=summary),
             ]
+            if STEWARDING.search(f"{state['current_query']} {decision.focus}"):
+                # In-race determinations: track-limits deletions, flags, investigations,
+                # penalties - the record a "should X have been penalised?" answer rests on.
+                incidents = race_incidents(openf1, session_key)
+                telemetry.append(ToolResult(tool="race_incidents", args={}, result=incidents))
         return {
             "race_context": race_context,
             "reg_context": {"season": source.season, "issue": source.issue},

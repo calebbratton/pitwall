@@ -321,3 +321,24 @@ def test_penalty_question_cites_stewards_decisions_separately():
     )
     _ask(graph, "What is the two-compound rule?")
     assert other.queries == []
+
+
+def test_race_penalty_question_gets_the_race_control_incident_record():
+    router = Scripted(
+        [
+            RouteDecision(
+                mode="race",
+                year=2024,
+                place="Monaco",
+                focus="Should Bottas have had a track limits penalty?",
+                regulation_queries=["leaving the track"],
+            )
+        ]
+    )
+    fetcher = Scripted([AIMessage("done")])
+    analyst = Scripted([_analysis("30.5")])
+    graph = _build(router, fetcher=fetcher, analyst=analyst, decisions=FakeDecisions())
+    state = _ask(graph, "Should Bottas have got a track limits penalty at Monaco 2024?")
+    tools = [r["tool"] for r in state["fetched_telemetry_json"]]
+    assert tools == ["key_race_events", "race_summary", "race_incidents"]
+    assert '"BOT"' in state["fetched_telemetry_json"][2]["result"]

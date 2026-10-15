@@ -183,3 +183,55 @@ def test_review_pit_stop_on_a_lap_they_didnt_pit_is_a_what_if(tools, monkeypatch
     assert calls == [(2024, "Monaco", "HAM", 30, None)]
     assert out["question"] == "what if HAM had pitted at the end of lap 30"
     assert out["options"][1]["p_worse_than_actual"] == 0.1
+
+
+def test_race_incidents_counts_track_limits_and_keeps_stewarding_messages():
+    from src.tools.models import RaceControlMessage
+    from src.tools.telemetry import race_incidents
+
+    def rc(lap, text):
+        return RaceControlMessage(
+            date="2026-10-11T12:00:00", lap_number=lap, category="Other", message=text
+        )
+
+    class Client:
+        def get_race_control(self, session_key):
+            return [
+                rc(
+                    10, "CAR 12 (ANT) TIME 1:35.101 DELETED - TRACK LIMITS AT TURN 7 LAP 9 20:10:02"
+                ),
+                rc(
+                    14,
+                    "CAR 12 (ANT) TIME 1:35.402 DELETED - TRACK LIMITS AT TURN 7 LAP 13 20:16:40",
+                ),
+                rc(
+                    20,
+                    "CAR 12 (ANT) TIME 1:35.000 DELETED - TRACK LIMITS AT TURN 18 LAP 19 20:26:01",
+                ),
+                rc(20, "BLACK AND WHITE FLAG FOR CAR 12 (ANT) - TRACK LIMITS"),
+                rc(
+                    25, "CAR 4 (NOR) TIME 1:34.900 DELETED - TRACK LIMITS AT TURN 7 LAP 24 20:33:00"
+                ),
+                rc(
+                    30,
+                    "TURN 7 INCIDENT INVOLVING CAR 4 (NOR) NOTED - LEAVING THE TRACK AND GAINING AN ADVANTAGE",
+                ),
+                rc(33, "FIA STEWARDS: 5 SECOND TIME PENALTY FOR CAR 4 (NOR) - TRACK LIMITS"),
+                rc(35, "DRS ENABLED"),
+            ]
+
+    out = json.loads(race_incidents(Client(), 1))
+    ant = out["track_limits"]["ANT"]
+    assert ant["deletions"] == 3 and ant["black_and_white_flag_lap"] == 20
+    assert ant["deleted"][0] == {"lap": 9, "turn": 7} and ant["penalised"] is False
+    assert out["track_limits"]["NOR"]["penalised"] is True
+    assert [m[0] for m in out["incidents"]] == [30, 33]
+
+
+def test_race_incidents_on_monaco_2024():
+    from src.tools.telemetry import race_incidents
+
+    client = MockOpenF1Client(MONACO_2024)
+    out = json.loads(race_incidents(client, client.get_session(2024, "Monaco").session_key))
+    assert out["track_limits"]["BOT"]["deleted"] == [{"lap": 19, "turn": 10}]
+    assert any("10 SECOND TIME PENALTY FOR CAR 31 (OCO)" in m[1] for m in out["incidents"])

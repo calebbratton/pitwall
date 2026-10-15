@@ -9,6 +9,7 @@ Design constraints (Groq free tier: 8K tokens/minute per model):
 """
 
 import json
+import re
 import statistics
 import unicodedata
 from datetime import UTC, datetime, timedelta
@@ -148,6 +149,57 @@ def key_race_events(client: OpenF1Client, session_key: int) -> str:
         or any(word in m.message.upper() for word in _KEY_EVENT_WORDS)
     ]
     return _json(events)
+
+
+_DELETED = re.compile(
+    r"CAR (\d+) \((\w+)\) TIME \S+ DELETED - TRACK LIMITS AT TURN (\d+) LAP (\d+)"
+)
+_BLACK_WHITE = re.compile(r"BLACK AND WHITE FLAG FOR CAR (\d+) \((\w+)\)")
+_CAR = re.compile(r"CARS? (\d+) \((\w+)\)")
+_STEWARDING_WORDS = (
+    "NOTED",
+    "INVESTIGATION",
+    "PENALTY",
+    "REPRIMAND",
+    "WARNING",
+    "SUMMONED",
+    "REPORTED",
+    "NO FURTHER ACTION",
+    "DISQUALIFIED",
+)
+MAX_INCIDENT_MESSAGES = 30
+
+
+def race_incidents(client: OpenF1Client, session_key: int) -> str:
+    """The race's in-race determinations from race control: per driver, lap times deleted for
+    track limits (lap, turn) and the black-and-white flag; then every incident noted,
+    investigated, penalised or cleared, in order. Fetched in code for penalty / incident
+    questions, so the answer counts real deletions instead of guessing."""
+    track_limits: dict[str, dict[str, Any]] = {}
+    incidents: list[list] = []
+    for m in client.get_race_control(session_key):
+        text = m.message.upper()
+        if deleted := _DELETED.search(text):
+            entry = track_limits.setdefault(deleted[2], {"deleted": []})
+            entry["deleted"].append({"lap": int(deleted[4]), "turn": int(deleted[3])})
+        elif flag := _BLACK_WHITE.search(text):
+            track_limits.setdefault(flag[2], {"deleted": []})["black_and_white_flag_lap"] = (
+                m.lap_number
+            )
+        elif any(word in text for word in _STEWARDING_WORDS):
+            incidents.append([m.lap_number, m.message])
+    for tla, entry in track_limits.items():
+        entry["deletions"] = len(entry["deleted"])
+        entry["penalised"] = any(
+            "PENALTY" in msg.upper()
+            and "TRACK LIMITS" in msg.upper()
+            and tla in [c[1] for c in _CAR.findall(msg.upper())]
+            for _, msg in incidents
+        )
+    if len(incidents) > MAX_INCIDENT_MESSAGES:
+        dropped = len(incidents) - MAX_INCIDENT_MESSAGES
+        incidents = incidents[:MAX_INCIDENT_MESSAGES] + [[None, f"TRUNCATED: {dropped} more"]]
+    return _json({"track_limits": track_limits, "incidents": incidents})
 
 
 def race_summary(client: OpenF1Client, session: Session) -> str:
