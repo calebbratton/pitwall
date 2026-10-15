@@ -425,15 +425,31 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
                 }
             )
         hypothetical = int(lap) not in stops
+        # OpenF1's location isn't always the archive's meeting name ("Marina Bay" is filed as
+        # Singapore): the race date finds it either way.
+        race_day = session.date_start[:10]
         try:
             from src.sim.pit_review import review, what_if_stop
 
             if hypothetical:
                 r = what_if_stop(
-                    session.year, session.location, d.name_acronym, int(lap), compound, sims=1500
+                    session.year,
+                    session.location,
+                    d.name_acronym,
+                    int(lap),
+                    compound,
+                    sims=1500,
+                    day=race_day,
                 )
             else:
-                r = review(session.year, session.location, d.name_acronym, int(lap), sims=1500)
+                r = review(
+                    session.year,
+                    session.location,
+                    d.name_acronym,
+                    int(lap),
+                    sims=1500,
+                    day=race_day,
+                )
         except Exception as e:  # noqa: BLE001 - errors go back to the model
             return f"ERROR: {type(e).__name__}: {e}. Laps {d.name_acronym} pitted on: {stops}"
         return _json(

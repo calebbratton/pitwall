@@ -23,6 +23,7 @@ import itertools
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import date
 
 from src.livetiming.archive import ArchiveSession, Message, find_session, list_sessions
 from src.livetiming.circuits import Circuit
@@ -97,26 +98,36 @@ def measured_pit_loss(laps: dict[str, list[LapRecord]]) -> tuple[float, int] | N
     return (round(statistics.median(losses), 1), len(losses)) if len(losses) >= 3 else None
 
 
-def archive_race(year: int, place: str) -> ArchiveSession:
+def archive_race(year: int, place: str, day: str | None = None) -> ArchiveSession:
     """The archived race for a meeting name ("Azerbaijan") or a location ("Madrid" is filed as
-    the Spanish Grand Prix): by archive folder name, else by race date from the warehouse."""
+    the Spanish Grand Prix): by archive folder name, else by race date - `day` (YYYY-MM-DD, e.g.
+    from the OpenF1 session) when given, else from the warehouse."""
     try:
         return ArchiveSession(find_session(year, place))
     except LookupError:
-        from src.sim.inputs import weekend_sessions
-        from src.warehouse.queries import connect
+        if day is None:
+            from src.sim.inputs import weekend_sessions
+            from src.warehouse.queries import connect
 
-        con = connect()
-        try:
-            _, sessions = weekend_sessions(con, year, place)
-            day = con.execute(
-                "SELECT strftime(date_start, '%Y-%m-%d') FROM races WHERE session_key = ?",
-                [sessions["Race"]],
-            ).fetchone()[0]
-        finally:
-            con.close()
-        match = [r for r in list_sessions(year) if r["date"] == day]
-        if not match:
+            con = connect()
+            try:
+                _, sessions = weekend_sessions(con, year, place)
+                day = con.execute(
+                    "SELECT strftime(date_start, '%Y-%m-%d') FROM races WHERE session_key = ?",
+                    [sessions["Race"]],
+                ).fetchone()[0]
+            finally:
+                con.close()
+        # The archive dates races in local time, OpenF1 and the warehouse in UTC: a night race
+        # can land on the next day (Las Vegas). Races are a week apart, so one day either side
+        # is unambiguous.
+        target = date.fromisoformat(day)
+        match = [
+            r
+            for r in list_sessions(year)
+            if r["date"] and abs((date.fromisoformat(r["date"]) - target).days) <= 1
+        ]
+        if len(match) != 1:
             raise
         return ArchiveSession(match[0]["path"])
 
@@ -277,9 +288,12 @@ def neutralised_laps(laps: list[LapRecord]) -> list[int]:
     return [r.lap for r in laps if r.neutralised and r.lap > 1]
 
 
-def review(year: int, meeting: str, driver: str, lap: int, sims: int = 4000) -> PitReview:
-    """Review `driver`'s stop at the end of `lap` (their in-lap)."""
-    messages = list(archive_race(year, meeting).messages(STRATEGY_TOPICS))
+def review(
+    year: int, meeting: str, driver: str, lap: int, sims: int = 4000, day: str | None = None
+) -> PitReview:
+    """Review `driver`'s stop at the end of `lap` (their in-lap). `day`: the race date, when
+    `meeting` might not name the archive folder (see `archive_race`)."""
+    messages = list(archive_race(year, meeting, day).messages(STRATEGY_TOPICS))
     return review_race(messages, year, driver, lap, sims)
 
 
@@ -498,10 +512,11 @@ def what_if_stop(
     lap: int,
     compound: str | None = None,
     sims: int = 4000,
+    day: str | None = None,
 ) -> PitReview:
     """What if `driver` had pitted at the end of `lap` (a lap they didn't pit on, e.g. under a
-    SC/VSC) instead of what they really did?"""
-    messages = list(archive_race(year, meeting).messages(STRATEGY_TOPICS))
+    SC/VSC) instead of what they really did? `day`: as for `review`."""
+    messages = list(archive_race(year, meeting, day).messages(STRATEGY_TOPICS))
     return what_if_race(messages, year, driver, lap, compound, sims)
 
 

@@ -159,8 +159,8 @@ def test_review_pit_stop_on_a_lap_they_didnt_pit_is_a_what_if(tools, monkeypatch
 
     calls = []
 
-    def fake(year, place, driver, lap, compound=None, sims=4000):
-        calls.append((year, place, driver, lap, compound))
+    def fake(year, place, driver, lap, compound=None, sims=4000, day=None):
+        calls.append((year, place, driver, lap, compound, day))
         branches = [
             Branch("actual: pit lap 51", 6.0, 0.0, 0.0, 0.0, 0.0),
             Branch("pit lap 30 for HARD", 5.2, 0.0, 0.0, 0.6, 0.1),
@@ -180,7 +180,8 @@ def test_review_pit_stop_on_a_lap_they_didnt_pit_is_a_what_if(tools, monkeypatch
 
     monkeypatch.setattr(pit_review, "what_if_stop", fake)
     out = json.loads(tools["review_pit_stop"].invoke({"driver": "HAM", "lap": 30}))
-    assert calls == [(2024, "Monaco", "HAM", 30, None)]
+    # The race date goes along: OpenF1's location ("Marina Bay") isn't always the archive's name.
+    assert calls == [(2024, "Monaco", "HAM", 30, None, "2024-05-26")]
     assert out["question"] == "what if HAM had pitted at the end of lap 30"
     assert out["options"][1]["p_worse_than_actual"] == 0.1
 

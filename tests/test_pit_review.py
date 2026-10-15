@@ -179,3 +179,39 @@ def test_time_ledger_counts_the_real_later_stop_as_saved():
     assert ledger["fresh_tyre_gain_s"] == pytest.approx(0.0, abs=0.5)
     assert ledger["saved_real_stop_lap_20_s"] > ledger["stop_cost_s"]
     assert ledger["would_have_finished_ahead_of"]
+
+
+def test_archive_race_falls_back_to_the_race_date_when_the_name_misses(monkeypatch):
+    # OpenF1 calls Singapore "Marina Bay", which isn't in the archive's folder names; the race
+    # date finds it without the warehouse (which may not have ingested the race yet).
+    from src.sim import pit_review
+
+    def no_folder(year, place, session="Race"):
+        raise LookupError("0 archived Race sessions match")
+
+    def warehouse(*_):
+        raise AssertionError("the race date should be enough")
+
+    monkeypatch.setattr(pit_review, "find_session", no_folder)
+    monkeypatch.setattr("src.warehouse.queries.connect", warehouse)
+    monkeypatch.setattr(
+        pit_review,
+        "list_sessions",
+        lambda year: [
+            {
+                "path": "2026/2026-10-04_Azerbaijan/2026-10-04_Race/",
+                "meeting": "",
+                "date": "2026-10-04",
+            },
+            {
+                "path": "2026/2026-10-11_Singapore/2026-10-11_Race/",
+                "meeting": "",
+                "date": "2026-10-11",
+            },
+        ],
+    )
+    race = pit_review.archive_race(2026, "Marina Bay", day="2026-10-11")
+    assert race.path == "2026/2026-10-11_Singapore/2026-10-11_Race/"
+    # Night races start the next UTC day in some time zones (Las Vegas): one day either side.
+    race = pit_review.archive_race(2026, "Marina Bay", day="2026-10-12")
+    assert race.path == "2026/2026-10-11_Singapore/2026-10-11_Race/"

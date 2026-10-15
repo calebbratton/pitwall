@@ -52,6 +52,8 @@ RRF_K = 60  # standard reciprocal-rank-fusion constant
 # that grows with data has a character budget.
 MAX_TOOL_RESULT_CHARS = 2500
 OLD_ROUND_RESULT_CHARS = 300  # earlier rounds' results, when resent to the fetcher
+# Prefixes the earlier result when the fetcher repeats a call (same tool, same arguments).
+REPEATED_CALL_NOTE = "Same call as an earlier round; the result is unchanged:"
 MAX_ANALYST_TELEMETRY_CHARS = 12000
 HISTORY_MESSAGES = 6
 LATEST_PLACES = {"latest", "last", "last race", "latest race", "most recent", "most recent race"}
@@ -83,6 +85,10 @@ def _compact_old_rounds(messages: list) -> list:
         else m
         for i, m in enumerate(messages)
     ]
+
+
+def _call_key(name: str, args: dict) -> str:
+    return f"{name}{json.dumps(args, sort_keys=True, default=str)}"
 
 
 def _history(state: PitWallState) -> str:
@@ -259,8 +265,20 @@ def build_graph(
     def run_tools(state: PitWallState) -> dict[str, Any]:
         tools = {t.name: t for t in tools_for(state["race_context"]["session_key"])}
         reply: AIMessage = state["fetch_messages"][-1]
-        tool_messages, results = [], []
+        tool_messages, results, repeats = [], [], []
+        earlier = {
+            _call_key(r["tool"], r["args"]): r["result"] for r in state["fetched_telemetry_json"]
+        }
         for call in reply.tool_calls:
+            key = _call_key(call["name"], call["args"])
+            if key in earlier:
+                # Not re-run, and not added to the evidence twice. The fetcher only sees earlier
+                # rounds clipped, so it gets the whole result again.
+                repeats.append(call["name"])
+                tool_messages.append(
+                    ToolMessage(f"{REPEATED_CALL_NOTE}\n{earlier[key]}", tool_call_id=call["id"])
+                )
+                continue
             if call["name"] in tools:
                 try:
                     output = tools[call["name"]].invoke(call["args"])
@@ -271,9 +289,18 @@ def build_graph(
             output = _clip(output, MAX_TOOL_RESULT_CHARS)
             tool_messages.append(ToolMessage(output, tool_call_id=call["id"]))
             results.append(ToolResult(tool=call["name"], args=call["args"], result=output))
+            earlier[key] = output
         return {
             "fetch_messages": [*state["fetch_messages"], *tool_messages],
             "fetched_telemetry_json": [*state["fetched_telemetry_json"], *results],
+            "evaluation_steps": [
+                *state["evaluation_steps"],
+                *(
+                    [f"tools: repeated calls answered from earlier results: {repeats}"]
+                    if repeats
+                    else []
+                ),
+            ],
         }
 
     def retrieve(state: PitWallState) -> dict[str, Any]:
@@ -393,6 +420,11 @@ def build_graph(
         return "retrieve"
 
     def after_tools(state: PitWallState) -> str:
+        # A round of nothing but repeats adds no data: the fetcher is looping, not working.
+        reply = next(m for m in reversed(state["fetch_messages"]) if isinstance(m, AIMessage))
+        answered = state["fetch_messages"][-len(reply.tool_calls) :]
+        if all(m.content.startswith(REPEATED_CALL_NOTE) for m in answered):
+            return "retrieve"
         return "fetch" if state["fetch_rounds"] < MAX_FETCH_ROUNDS else "retrieve"
 
     g = StateGraph(PitWallState)
