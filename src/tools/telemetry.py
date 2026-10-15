@@ -335,13 +335,26 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
             return _json(rows[:MAX_RACE_CONTROL_MESSAGES] + [note])
         return _json(rows)
 
+    def neutralised_laps(number: int) -> dict[str, list[int]]:
+        """The driver's laps that overlapped a SC / VSC / red flag, by kind."""
+        out: dict[str, list[int]] = {}
+        for lap in client.get_laps(sk, number):
+            for kind in ("SC", "VSC", "RED"):
+                if _overlaps(lap, [w for w in windows() if w[2] == kind]):
+                    out.setdefault(kind, []).append(lap.lap_number)
+        return out
+
     @tool
-    def review_pit_stop(driver: str, lap: int | None = None) -> str:
-        """Was this pit stop the right call? Replays the race to the moment the driver entered
-        the pits and simulates the alternatives (pit that lap, stay out 1-5 more laps, no more
-        stops) with tyre wear, fresh-tyre gain and pit loss measured in this race; rivals stop
-        when they really did. Give the driver and the lap they pitted (their in-lap). Without a
-        lap, returns the laps they pitted on. Takes ~20-60 s."""
+    def review_pit_stop(driver: str, lap: int | None = None, compound: str | None = None) -> str:
+        """Pit stop reviews and what-ifs, simulated from this race's measured tyre wear and pit
+        loss; rivals stop when they really did. Give the driver and a lap:
+        - a lap they pitted on (their in-lap): was that stop right? Compares it with staying out
+          1-5 more laps and with no more stops.
+        - any other lap: what if they had pitted at the end of it (e.g. under a SC/VSC)?
+          Compares that stop with what they really did. `compound`: tyre fitted (default: the
+          one they really fitted next).
+        Without a lap, returns the laps they pitted on and their laps under SC/VSC/red flag.
+        Takes ~20-60 s."""
         d = resolve(driver)
         if isinstance(d, str):
             return d
@@ -352,17 +365,33 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
         ]
         stops = sorted(stops)[:-1]  # the last stint ends at the flag, not in the pits
         if lap is None:
-            return _json({"driver": d.name_acronym, "pitted_on_laps": stops})
+            return _json(
+                {
+                    "driver": d.name_acronym,
+                    "pitted_on_laps": stops,
+                    "laps_under_neutralisation": neutralised_laps(d.driver_number),
+                }
+            )
+        hypothetical = int(lap) not in stops
         try:
-            from src.sim.pit_review import review
+            from src.sim.pit_review import review, what_if_stop
 
-            r = review(session.year, session.location, d.name_acronym, int(lap), sims=1500)
+            if hypothetical:
+                r = what_if_stop(
+                    session.year, session.location, d.name_acronym, int(lap), compound, sims=1500
+                )
+            else:
+                r = review(session.year, session.location, d.name_acronym, int(lap), sims=1500)
         except Exception as e:  # noqa: BLE001 - errors go back to the model
             return f"ERROR: {type(e).__name__}: {e}. Laps {d.name_acronym} pitted on: {stops}"
         return _json(
             {
-                "driver": r.driver,
-                "lap": r.lap,
+                "question": (
+                    f"what if {r.driver} had pitted at the end of lap {r.lap}"
+                    if hypothetical
+                    else f"was {r.driver}'s stop at the end of lap {r.lap} right"
+                ),
+                "pitted_on_laps": stops,
                 "track_status_at_decision": r.status,
                 "tyres": f"{r.old_compound} ({r.old_tyre_age} laps) -> {r.new_compound}",
                 "measured": r.measured,
@@ -373,6 +402,7 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
                         "p_win": b.p_win,
                         "p_podium": b.p_podium,
                         "p_better_than_actual": b.p_better_than_actual,
+                        **({"p_worse_than_actual": b.p_worse_than_actual} if hypothetical else {}),
                     }
                     for b in r.branches
                 ],

@@ -41,8 +41,12 @@ get_pace_summary per driver per stint for degradation, get_lap_times for short w
 laps the question names (a team means both drivers).
 For "was pitting / stopping right?" or "should they have stayed out?" questions about a specific
 stop, call review_pit_stop with the driver and the lap they pitted (get the lap from the race
-summary or get_tyre_stints, or call it without a lap to list their stops). Its verdict and
-options are simulated from measured data - report them, don't redo the reasoning.
+summary or get_tyre_stints, or call it without a lap to list their stops).
+For "what if they had pitted on lap N / under the safety car / under the VSC?", call
+review_pit_stop with the driver and that lap: for a SC/VSC, a lap the driver ran under it (from
+the key race events, or call it without a lap: it lists their laps under each neutralisation).
+If there were several SC/VSC periods and the question doesn't say which, review each.
+Its verdict and options are simulated from measured data - report them, don't redo the reasoning.
 """
 
 ANALYST = """\

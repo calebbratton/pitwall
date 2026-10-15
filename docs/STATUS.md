@@ -142,6 +142,10 @@ has opt-in browser notifications (battle, SC call, undercut). Recommend-only: F1
 - Post-race chat: review_pit_stop tool (pit review engine) for "was pitting the right call?";
   the review notes rivals who got a cheap SC/VSC stop just before (Madrid NOR lap 15).
 - Live strategy chat: context includes pit-within-3-laps (hazard), undercut chances, battles.
+- Post-race chat what-ifs (2026-10-15): "what if HAM had pitted under the VSC?" -
+  review_pit_stop on a lap the driver didn't pit simulates a stop there vs what they really did
+  (`python -m src.sim.pit_review ... --lap N --what-if`); without a lap it lists their stops and
+  their laps under SC/VSC/red flag. Simulates one more stop only (noted when they made more).
 - Baselines (2026-10-03, `python -m src.sim.baselines`): 15 races of 2026 at the grid stage,
   luck-adjusted result. Winner log-loss / podium log-loss / favourite won: model 1.294 / 0.237 /
   9; grid-slot rates (2023-25) 1.428 / 0.288 / 8; LLM (Groq gpt-oss-120b, same numbers + last 3

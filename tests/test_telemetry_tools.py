@@ -148,4 +148,38 @@ def test_2026_vsc_wording_and_vsc_upgraded_to_sc():
 def test_review_pit_stop_lists_stops_without_a_lap(tools):
     out = json.loads(tools["review_pit_stop"].invoke({"driver": "LEC"}))
     assert out["driver"] == "LEC" and isinstance(out["pitted_on_laps"], list)
+    # The restart after Monaco's lap-1 red flag: the window a cheap stop would have used.
+    assert out["laps_under_neutralisation"] == {"RED": [2]}
     assert tools["review_pit_stop"].invoke({"driver": "Brabham"}).startswith("ERROR")
+
+
+def test_review_pit_stop_on_a_lap_they_didnt_pit_is_a_what_if(tools, monkeypatch):
+    from src.sim import pit_review
+    from src.sim.pit_review import Branch, PitReview
+
+    calls = []
+
+    def fake(year, place, driver, lap, compound=None, sims=4000):
+        calls.append((year, place, driver, lap, compound))
+        branches = [
+            Branch("actual: pit lap 51", 6.0, 0.0, 0.0, 0.0, 0.0),
+            Branch("pit lap 30 for HARD", 5.2, 0.0, 0.0, 0.6, 0.1),
+        ]
+        return PitReview(
+            driver="HAM",
+            lap=lap,
+            status="VSC",
+            old_compound="MEDIUM",
+            new_compound="HARD",
+            old_tyre_age=30,
+            measured={},
+            branches=branches,
+            verdict="better",
+            notes=[],
+        )
+
+    monkeypatch.setattr(pit_review, "what_if_stop", fake)
+    out = json.loads(tools["review_pit_stop"].invoke({"driver": "HAM", "lap": 30}))
+    assert calls == [(2024, "Monaco", "HAM", 30, None)]
+    assert out["question"] == "what if HAM had pitted at the end of lap 30"
+    assert out["options"][1]["p_worse_than_actual"] == 0.1
