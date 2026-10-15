@@ -181,6 +181,17 @@ def test_time_ledger_when_the_driver_stayed_out_to_the_flag():
     assert "(measured from LEC, RUS, ANT)" in r.verdict
 
 
+def test_time_ledger_measures_each_cars_own_wear():
+    # The race-wide rate for a compound needn't fit one car's stint (Singapore 2026: 0.046 s/lap
+    # on softs, while HAM's softs held flat to ~35 laps). Each car's own stint sets its wear, so
+    # a wrong race-wide rate leaves the gain right: 0.08 s/lap per lap of age difference.
+    from src.sim.pit_review import _load, time_ledger
+
+    race = _load(_race({**STOPS, "44": 5}), 2026, "HAM")
+    ledger = time_ledger(race, VSC_LAP, "HARD", {"MEDIUM": 0.3, "HARD": 0.3})
+    assert ledger["fresh_tyre_gain_s"] == pytest.approx(0.8 * (TOTAL - VSC_LAP - 1), abs=1.5)
+
+
 def test_time_ledger_counts_the_real_later_stop_as_saved():
     ledger = what_if_race(_race(), 2026, "HAM", VSC_LAP, sims=50).ledger
     # Older tyres before HAM's lap-20 stop, fresher after it: they cancel out here.

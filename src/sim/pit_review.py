@@ -31,7 +31,7 @@ from src.livetiming.archive import ArchiveSession, Message, find_session, list_s
 from src.livetiming.circuits import Circuit
 from src.livetiming.monitor import STRATEGY_TOPICS, LapRecord, RaceMonitor, _circuit_for
 from src.models.tyre_curves import season_curves
-from src.models.tyres import CleanLap, fit_tyre_model
+from src.models.tyres import CleanLap, fit_tyre_model, stint_slopes
 from src.sim.inrace import RaceState, StopPlan, race_state, simulate_from
 
 MEASURE_LAPS = 3  # clean laps either side of the stop for the measured fresh-tyre gain
@@ -494,8 +494,23 @@ def time_ledger(
     def clean(r: LapRecord | None) -> bool:
         return r is not None and not (r.pit_in or r.pit_out or r.neutralised)
 
-    def wear(r: LapRecord) -> float:
-        return (deg or {}).get(r.compound or "", 0.0) * (r.tyre_age or 0)
+    # Each car's own wear on the stint it was on, from its clean laps before the decision (a
+    # compound's race-wide rate needn't fit one car's stint); the race-wide rate where a stint
+    # is too short to fit.
+    own_wear = stint_slopes(
+        [
+            CleanLap(car, r.stint, r.compound, r.lap, r.tyre_age, r.time_s)
+            for car, recs in race.full.laps.items()
+            for r in _clean_times(recs)
+            if r.lap < lap and r.compound and r.tyre_age is not None
+        ]
+    )
+
+    def wear(car: str, r: LapRecord) -> float:
+        slope = own_wear.get((car, r.stint))
+        if slope is None:
+            slope = (deg or {}).get(r.compound or "", 0.0)
+        return min(max(slope, 0.0), 0.3) * (r.tyre_age or 0)
 
     def stop_cost(car: str, in_lap: int, exclude: set[str]) -> float | None:
         """In-lap + out-lap vs the median of cars that didn't stop on those laps."""
@@ -526,7 +541,7 @@ def time_ledger(
         # tyre age (measured degradation x age difference) - had the driver stopped too, they'd
         # have been on tyres as old as the other car's.
         before = [
-            mine[n].time_s - theirs[n].time_s - wear(mine[n]) + wear(theirs[n])
+            mine[n].time_s - theirs[n].time_s - wear(number, mine[n]) + wear(car, theirs[n])
             for n in range(lap - LEDGER_BEFORE_LAPS, lap)
             if clean(mine.get(n)) and clean(theirs.get(n))
         ]

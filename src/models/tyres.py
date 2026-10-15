@@ -72,6 +72,7 @@ class _StintFit:
     slope: float  # fuel-corrected degradation
     intercept: float  # fuel-corrected time at tyre age 0
     n: int
+    stint: int = 0
 
 
 def _fit_stints(laps: list[CleanLap], fuel_gain: float) -> list[_StintFit]:
@@ -79,7 +80,7 @@ def _fit_stints(laps: list[CleanLap], fuel_gain: float) -> list[_StintFit]:
     for lap in laps:
         by_stint[(lap.driver, lap.stint)].append(lap)
     fits = []
-    for (driver, _), stint in by_stint.items():
+    for (driver, stint_no), stint in by_stint.items():
         median = statistics.median(l.lap_time for l in stint)
         stint = [l for l in stint if l.lap_time <= median * OUTLIER_FACTOR]
         if len(stint) < MIN_STINT_LAPS or len({l.tyre_age for l in stint}) < 3:
@@ -89,9 +90,19 @@ def _fit_stints(laps: list[CleanLap], fuel_gain: float) -> list[_StintFit]:
         corrected = np.array([l.lap_time + fuel_gain * l.lap_number for l in stint])
         slope, intercept = np.polyfit(ages, corrected, 1)
         fits.append(
-            _StintFit(driver, stint[0].compound, float(slope), float(intercept), len(stint))
+            _StintFit(
+                driver, stint[0].compound, float(slope), float(intercept), len(stint), stint_no
+            )
         )
     return fits
+
+
+def stint_slopes(
+    laps: list[CleanLap], fuel_gain: float = FUEL_GAIN_S_PER_LAP
+) -> dict[tuple[str, int], float]:
+    """Each stint's own fuel-corrected degradation, (driver, stint) -> s/lap of tyre age, for
+    stints with enough clean laps to fit."""
+    return {(f.driver, f.stint): f.slope for f in _fit_stints(laps, fuel_gain)}
 
 
 def _weighted_median(values: list[float], weights: list[float]) -> float:
