@@ -25,6 +25,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date
 
+import numpy as np
+
 from src.livetiming.archive import ArchiveSession, Message, find_session, list_sessions
 from src.livetiming.circuits import Circuit
 from src.livetiming.monitor import STRATEGY_TOPICS, LapRecord, RaceMonitor, _circuit_for
@@ -178,6 +180,15 @@ def _load(messages: list[Message], year: int, driver: str) -> _Race:
     )
 
 
+def _finish(race: _Race) -> dict[str, int]:
+    """Where every classified car really finished."""
+    return {d.number: d.position for d in race.full.snapshot().drivers if d.position}
+
+
+def _tlas(race: _Race) -> dict[str, str]:
+    return {d.number: d.tla for d in race.full.snapshot().drivers}
+
+
 def _state_until(race: _Race, stop_before: Callable[[Message, list[LapRecord]], bool]) -> RaceState:
     """Race state just before the first message `stop_before` flags (given the driver's laps so
     far), with hindsight tyre numbers from the whole race."""
@@ -231,11 +242,12 @@ def _branches(
     base_plan: dict[str, StopPlan],
     options: list[tuple[str, StopPlan]],
     sims: int,
-) -> list[Branch]:
+) -> tuple[list[Branch], np.ndarray]:
     """Simulate each option for the driver (same random numbers for every branch); the first
-    option is the reference the others are compared with."""
+    option is the reference the others are compared with. Also returns the reference option's
+    finishing positions for every car (sims x cars, in `state.cars` order)."""
     idx = [c.number for c in state.cars].index(race.number)
-    results = []
+    results, reference_positions = [], None
     for label, my_plan in options:
         out = simulate_from(
             state,
@@ -245,6 +257,8 @@ def _branches(
             return_positions=True,
         )
         results.append((label, out["positions"][:, idx]))
+        if reference_positions is None:
+            reference_positions = out["positions"]
     reference = results[0][1]
     return [
         Branch(
@@ -256,7 +270,7 @@ def _branches(
             p_worse_than_actual=round(float((pos > reference).mean()), 3),
         )
         for label, pos in results
-    ]
+    ], reference_positions
 
 
 def _measured(race: _Race, state: RaceState, lap: int, new_compound: str | None) -> dict:
@@ -297,6 +311,65 @@ def review(
     return review_race(messages, year, driver, lap, sims)
 
 
+def baseline_check(
+    number: str,
+    cars: list[str],
+    positions: np.ndarray,
+    real: dict[str, int],
+    tla: dict[str, str],
+) -> str | None:
+    """What the driver really did, simulated (`positions`: sims x cars, in `cars` order) next to
+    where they really finished. A place or more apart: the head-to-heads the simulation gets
+    wrong (it keeps the driver ahead of / behind a car in 80%+ of runs, the real result was the
+    other way). Both options share that bias, so the comparison between them is the answer."""
+    if number not in real:
+        return None
+    me = cars.index(number)
+    expected = float(positions[:, me].mean())
+    name = tla.get(number, number)
+    note = f"what {name} really did simulates to P{expected:.1f}; {name} really finished P{real[number]}"
+    if abs(expected - real[number]) < 1:
+        return note
+    wrong = []
+    for j, car in enumerate(cars):
+        if j == me or car not in real:
+            continue
+        ahead = float((positions[:, me] < positions[:, j]).mean())
+        other = tla.get(car, car)
+        if real[car] < real[number] and ahead >= 0.8:
+            wrong.append(f"ahead of {other} in {ahead:.0%} of runs, but {other} finished ahead")
+        elif real[car] > real[number] and ahead <= 0.2:
+            wrong.append(f"behind {other} in {1 - ahead:.0%} of runs, but {other} finished behind")
+    if wrong:
+        note += f" (the simulation has {name} " + "; ".join(wrong) + ")"
+    return note + ": compare the options with each other rather than with the real result"
+
+
+CLOSE_CALL = 0.15  # expected-position difference below which options are a toss-up
+
+
+def review_verdict(lap: int, branches: list[Branch]) -> str:
+    """The verdict on a real stop (branches[0]) against the alternatives, worded by the margin:
+    the stop is only "the right call" when no alternative scored better."""
+    actual = branches[0]
+    best = min(branches, key=lambda b: (b.expected, b is not actual))
+    margin = actual.expected - best.expected
+    if best is actual:
+        return f"Pitting on lap {lap} was the right call: no alternative scored better."
+    if margin < CLOSE_CALL:
+        return (
+            f"Close call: {best.label} scores slightly better (expected P{best.expected:.2f} vs "
+            f"P{actual.expected:.2f} for pitting on lap {lap}; ahead of the actual result in "
+            f"{best.p_better_than_actual:.0%} of simulations, behind in "
+            f"{best.p_worse_than_actual:.0%}): {margin:.2f} places apart."
+        )
+    return (
+        f"{best.label.capitalize()} would likely have been better: expected P{best.expected:.1f}"
+        f" vs P{actual.expected:.1f}, ahead of the actual result in "
+        f"{best.p_better_than_actual:.0%} of simulations."
+    )
+
+
 def review_race(
     messages: list[Message], year: int, driver: str, lap: int, sims: int = 4000
 ) -> PitReview:
@@ -333,7 +406,10 @@ def review_race(
     )
     if can_finish and not car.owes_compound:
         options.append(("no stop (run to the flag)", StopPlan(None)))
-    branches = _branches(race, state, base_plan, options, sims)
+    branches, reference = _branches(race, state, base_plan, options, sims)
+    check = baseline_check(
+        number, [c.number for c in state.cars], reference, _finish(race), _tlas(race)
+    )
 
     # Context: rivals near the driver who stopped under a SC/VSC just before this decision - the
     # cheap stop the driver didn't get (Madrid 2026: everyone but Norris pitted under the VSC).
@@ -355,17 +431,7 @@ def review_race(
         )
     else:
         context_note = ""
-    best = min(branches, key=lambda b: b.expected)
-    actual = branches[0]
-    margin = actual.expected - best.expected
-    if best is actual or margin < 0.15:
-        verdict = f"Pitting on lap {lap} was the right call (or as good as any alternative)."
-    else:
-        verdict = (
-            f"{best.label.capitalize()} would likely have been better: expected P{best.expected:.1f}"
-            f" vs P{actual.expected:.1f}, ahead of the actual result in "
-            f"{best.p_better_than_actual:.0%} of simulations."
-        )
+    verdict = review_verdict(lap, branches)
     return PitReview(
         driver=tla,
         lap=lap,
@@ -380,6 +446,7 @@ def review_race(
             f"state at the leader's lap {state.lap}, {remaining} laps to go, track {state.status}",
             *([race.pit_note] if race.pit_note else []),
             *([context_note] if context_note else []),
+            *([check] if check else []),
             "rivals stop when they really did (hindsight); tyre numbers measured over the whole race",
             *state.notes,
         ],
@@ -415,6 +482,9 @@ def time_ledger(
         for in_lap, fitted in stops
         if car != number and in_lap in window
     ]
+    # Stops on the lap itself first: a lap either side can be under another track status (a
+    # green stop the lap before a VSC costs nearly twice as much).
+    refs = [r for r in refs if r[1] == lap] or refs
     same = [r for r in refs if compound and r[2] == compound]
     refs = same or refs
     if not refs:
@@ -452,8 +522,6 @@ def time_ledger(
     costs, gains, used = [], [], []
     for car, in_lap, _ in refs:
         theirs = _lap_times(race.full.laps.get(car) or [])
-        if (cost := stop_cost(car, in_lap, stopping)) is not None:
-            costs.append(cost)
         # Their pace gap on equal tyres: the lap-time gap before the stop, less the part from
         # tyre age (measured degradation x age difference) - had the driver stopped too, they'd
         # have been on tyres as old as the other car's.
@@ -462,13 +530,30 @@ def time_ledger(
             for n in range(lap - LEDGER_BEFORE_LAPS, lap)
             if clean(mine.get(n)) and clean(theirs.get(n))
         ]
+        base = statistics.median(before) if len(before) >= 3 else None
+        # The stop's cost: their in- and out-lap, at the driver's pace, vs the driver's own laps
+        # (who stayed out, near them on track). A SC/VSC ends at different times around the
+        # lap, so the field's median laps aren't what staying out was worth here.
+        own = [mine.get(n) for n in (in_lap, in_lap + 1)]
+        if (
+            base is not None
+            and {in_lap, in_lap + 1} <= theirs.keys()
+            and all(r is not None and not (r.pit_in or r.pit_out) for r in own)
+        ):
+            costs.append(
+                theirs[in_lap].time_s
+                + theirs[in_lap + 1].time_s
+                + 2 * base
+                - sum(r.time_s for r in own)
+            )
+        elif base is None and (cost := stop_cost(car, in_lap, stopping)) is not None:
+            costs.append(cost)
         after = [
             (mine[n].time_s - theirs[n].time_s)
             for n in range(in_lap + 2, end + 1)
             if clean(mine.get(n)) and clean(theirs.get(n))
         ]
-        if len(before) >= 3 and after:
-            base = statistics.median(before)
+        if base is not None and after:
             excess = [d - base for d in after]
             laps_run = max(end - (in_lap + 1), len(after))
             # Laps without a clean comparison (traffic, flags) count at the average gain.
@@ -569,8 +654,11 @@ def what_if_race(
     if ledger:
         state = replace(state, pit_loss_now=ledger["stop_cost_s"])
     hypo_label = f"pit lap {lap}{f' {status}' if status else ''} for {new}"
-    branches = _branches(
+    branches, reference = _branches(
         race, state, _rival_plans(race, state, lap), [actual, (hypo_label, StopPlan(1, new))], sims
+    )
+    check = baseline_check(
+        number, [c.number for c in state.cars], reference, _finish(race), _tlas(race)
     )
     real, hypo = branches
     if abs(real.expected - hypo.expected) < 0.15:
@@ -602,7 +690,6 @@ def what_if_race(
         verdict += f" Simulated with traffic and track position: {sim}."
     else:
         verdict = f"Pitting on lap {lap}, simulated: {sim}."
-    finish = race.full.snapshot().driver(tla)
     notes = [
         f"state at the leader's lap {state.lap}, {state.laps_remaining} laps to go",
         *(
@@ -611,7 +698,7 @@ def what_if_race(
             else []
         ),
         *([race.pit_note] if race.pit_note else []),
-        f"{tla} really finished P{finish.position}" if finish.position else "",
+        check or "",
         *(
             [f"{tla} really stopped {len(later)} more times; the simulation models one more stop"]
             if len(later) > 1

@@ -52,7 +52,14 @@ VSC_LAP = 15
 STOPS = {"44": 20, "16": VSC_LAP, "63": VSC_LAP, "12": VSC_LAP}  # in-laps
 
 
-def _race(stops: dict[str, int] = STOPS) -> list[Message]:
+def _race(
+    stops: dict[str, int] = STOPS,
+    cars: dict[str, tuple[str, float]] = CARS,
+    extra: dict[tuple[str, int], float] | None = None,
+) -> list[Message]:
+    """`extra`: (car, lap) -> seconds added to that lap (e.g. a VSC that lasted longer where
+    the car was on track)."""
+    extra = extra or {}
     t = [0.0]
 
     def msg(topic: str, data: dict) -> Message:
@@ -62,40 +69,41 @@ def _race(stops: dict[str, int] = STOPS) -> list[Message]:
     out = [
         msg("SessionInfo", {"Name": "Race", "Type": "Race", "Meeting": {"Name": "Test GP"}}),
         msg("TrackStatus", {"Status": "1"}),
-        msg("DriverList", {n: {"Tla": tla} for n, (tla, _) in CARS.items()}),
+        msg("DriverList", {n: {"Tla": tla} for n, (tla, _) in cars.items()}),
         msg("LapCount", {"CurrentLap": 1, "TotalLaps": TOTAL}),
         msg(
             "TimingAppData",
             {
                 "Lines": {
                     n: {"Stints": [{"Compound": "MEDIUM", "New": "true", "TotalLaps": 0}]}
-                    for n in CARS
+                    for n in cars
                 }
             },
         ),
     ]
-    elapsed = {n: i * 1.0 for i, n in enumerate(CARS)}
-    stint_age = dict.fromkeys(CARS, 0)
-    stint = dict.fromkeys(CARS, 0)
+    elapsed = {n: i * 1.0 for i, n in enumerate(cars)}
+    stint_age = dict.fromkeys(cars, 0)
+    stint = dict.fromkeys(cars, 0)
     for lap in range(1, TOTAL + 1):
         out.append(msg("LapCount", {"CurrentLap": lap}))
         if lap == VSC_LAP:
             out.append(msg("TrackStatus", {"Status": "6"}))
-        for n, (_, pace) in CARS.items():
+        for n, (_, pace) in cars.items():
             if stops[n] == lap:
                 out.append(msg("TimingData", {"Lines": {n: {"InPit": True}}}))
         times = {}
-        for n, (_, pace) in CARS.items():
+        for n, (_, pace) in cars.items():
             fuel = -0.04 * lap  # burn-off: the tyre fits correct for it
             time = 90 + pace + fuel + 0.08 * stint_age[n] + (20 if lap == VSC_LAP else 0)
             if stops[n] == lap:
                 time += 6 if lap == VSC_LAP else 10
             if stops[n] == lap - 1:
                 time += 6 if lap - 1 == VSC_LAP else 12
+            time += extra.get((n, lap), 0.0)
             times[n] = time
             elapsed[n] += time
         leader = min(elapsed.values())
-        order = sorted(CARS, key=elapsed.__getitem__)
+        order = sorted(cars, key=elapsed.__getitem__)
         for pos, n in enumerate(order, 1):
             stint_age[n] += 1
             line = {
@@ -181,6 +189,21 @@ def test_time_ledger_counts_the_real_later_stop_as_saved():
     assert ledger["would_have_finished_ahead_of"]
 
 
+def test_time_ledger_stop_cost_is_measured_against_the_drivers_own_laps():
+    # Singapore 2026: the VSC was ending on lap 40, so cars elsewhere on track ran it at full
+    # speed while HAM and the cars stopping near him were still slowed. Against the field's
+    # median those two laps inflated the stop cost (19.5 s vs the 12.7-14.2 s LEC and ANT
+    # really lost to HAM); and a green stop on the lap before isn't a VSC stop.
+    cars = {**CARS, "1": ("VER", -0.3), "4": ("NOR", -0.2), "81": ("PIA", -0.1)}
+    stops = {**STOPS, "44": 5, "1": 25, "4": VSC_LAP - 1, "81": 25}
+    near = ("44", "16", "63", "12")
+    extra = {(n, VSC_LAP + 1): 15.0 for n in near}
+    r = what_if_race(_race(stops, cars, extra), 2026, "HAM", VSC_LAP, sims=100)
+    assert r.ledger["compared_with"] == ["LEC", "RUS", "ANT"]
+    # The synthetic stop costs 6 s on the in-lap and 6 s on the out-lap.
+    assert r.ledger["stop_cost_s"] == pytest.approx(12.0, abs=0.7)
+
+
 def test_archive_race_falls_back_to_the_race_date_when_the_name_misses(monkeypatch):
     # OpenF1 calls Singapore "Marina Bay", which isn't in the archive's folder names; the race
     # date finds it without the warehouse (which may not have ingested the race yet).
@@ -215,3 +238,48 @@ def test_archive_race_falls_back_to_the_race_date_when_the_name_misses(monkeypat
     # Night races start the next UTC day in some time zones (Las Vegas): one day either side.
     race = pit_review.archive_race(2026, "Marina Bay", day="2026-10-12")
     assert race.path == "2026/2026-10-11_Singapore/2026-10-11_Race/"
+
+
+def test_review_verdict_never_calls_the_stop_best_when_another_option_scores_better():
+    from src.sim.pit_review import Branch, review_verdict
+
+    def b(label, expected, better=0.0, worse=0.0):
+        return Branch(label, expected, 0.0, 1.0, better, worse)
+
+    actual = b("pit lap 39 (actual)", 2.01)
+    # Singapore 2026 LEC: no stop scored 1.95 - close, but better.
+    v = review_verdict(
+        39,
+        [
+            actual,
+            b("stay out 1 more lap", 2.03, 0, 0.03),
+            b("no stop (run to the flag)", 1.95, 0.05),
+        ],
+    )
+    assert "right call" not in v
+    assert "no stop (run to the flag)" in v and "P1.95" in v and "P2.01" in v
+    v = review_verdict(39, [actual, b("stay out 1 more lap", 2.03, 0, 0.03)])
+    assert v.startswith("Pitting on lap 39 was the right call")
+    v = review_verdict(39, [actual, b("no stop (run to the flag)", 1.4, 0.6)])
+    assert v.startswith("No stop (run to the flag) would likely have been better")
+
+
+def test_baseline_check_shows_the_real_finish_and_the_head_to_heads_the_sim_gets_wrong():
+    import numpy as np
+
+    from src.sim.pit_review import baseline_check
+
+    # Singapore 2026: what HAM really did simulates to ~P4.9, ahead of PIA in every run; PIA
+    # really finished 3.5 s ahead of him (HAM P6).
+    cars = ["1", "81", "44"]  # NOR, PIA, HAM
+    tla = {"1": "NOR", "81": "PIA", "44": "HAM"}
+    sim = np.array([[4, 6, 5]] * 9 + [[5, 6, 4]])
+    note = baseline_check("44", cars, sim, {"1": 4, "81": 5, "44": 6}, tla)
+    assert note.startswith("what HAM really did simulates to P4.9; HAM really finished P6")
+    assert "ahead of PIA in 100% of runs" in note and "NOR" not in note
+    assert "compare the options with each other" in note
+    # Within a place: just the two numbers.
+    assert baseline_check("44", cars, sim, {"1": 4, "81": 6, "44": 5}, tla) == (
+        "what HAM really did simulates to P4.9; HAM really finished P5"
+    )
+    assert baseline_check("44", cars, sim, {"1": 4, "81": 5}, tla) is None  # didn't finish
