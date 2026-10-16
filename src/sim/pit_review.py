@@ -29,7 +29,8 @@ import numpy as np
 
 from src.livetiming.archive import ArchiveSession, Message, find_session, list_sessions
 from src.livetiming.circuits import Circuit
-from src.livetiming.monitor import STRATEGY_TOPICS, LapRecord, RaceMonitor, _circuit_for
+from src.livetiming.monitor import LapRecord, RaceMonitor, _circuit_for
+from src.livetiming.sources import SOURCES, race_messages
 from src.models.tyre_curves import season_curves
 from src.models.tyres import CleanLap, fit_tyre_model, stint_slopes
 from src.sim.inrace import RaceState, StopPlan, race_state, simulate_from
@@ -302,13 +303,24 @@ def neutralised_laps(laps: list[LapRecord]) -> list[int]:
     return [r.lap for r in laps if r.neutralised and r.lap > 1]
 
 
+def _with_source(r: PitReview, source: str) -> PitReview:
+    return replace(r, notes=[*r.notes, f"race data: {source}"])
+
+
 def review(
-    year: int, meeting: str, driver: str, lap: int, sims: int = 4000, day: str | None = None
+    year: int,
+    meeting: str,
+    driver: str,
+    lap: int,
+    sims: int = 4000,
+    day: str | None = None,
+    sources: tuple[str, ...] = SOURCES,
 ) -> PitReview:
-    """Review `driver`'s stop at the end of `lap` (their in-lap). `day`: the race date, when
-    `meeting` might not name the archive folder (see `archive_race`)."""
-    messages = list(archive_race(year, meeting, day).messages(STRATEGY_TOPICS))
-    return review_race(messages, year, driver, lap, sims)
+    """Review `driver`'s stop at the end of `lap` (their in-lap). `day`: the race date (finds
+    recordings, and the archive folder when `meeting` doesn't name it). `sources`: where the
+    race's messages may come from, in order (src/livetiming/sources.py)."""
+    race = race_messages(year, meeting, day, sources=sources)
+    return _with_source(review_race(race.messages, year, driver, lap, sims), race.source)
 
 
 def baseline_check(
@@ -613,11 +625,12 @@ def what_if_stop(
     compound: str | None = None,
     sims: int = 4000,
     day: str | None = None,
+    sources: tuple[str, ...] = SOURCES,
 ) -> PitReview:
     """What if `driver` had pitted at the end of `lap` (a lap they didn't pit on, e.g. under a
-    SC/VSC) instead of what they really did? `day`: as for `review`."""
-    messages = list(archive_race(year, meeting, day).messages(STRATEGY_TOPICS))
-    return what_if_race(messages, year, driver, lap, compound, sims)
+    SC/VSC) instead of what they really did? `day`, `sources`: as for `review`."""
+    race = race_messages(year, meeting, day, sources=sources)
+    return _with_source(what_if_race(race.messages, year, driver, lap, compound, sims), race.source)
 
 
 def what_if_race(
@@ -747,11 +760,19 @@ def main() -> None:
         "--what-if", action="store_true", help="a lap they didn't pit on: what if they had?"
     )
     ap.add_argument("--compound", help="--what-if: the compound fitted (default: their next one)")
+    ap.add_argument(
+        "--source",
+        choices=SOURCES,
+        help="use only this source for the race's timing (default: recording, archive, OpenF1)",
+    )
     args = ap.parse_args()
+    sources = (args.source,) if args.source else SOURCES
     if args.what_if:
-        r = what_if_stop(args.year, args.meeting, args.driver, args.lap, args.compound)
+        r = what_if_stop(
+            args.year, args.meeting, args.driver, args.lap, args.compound, sources=sources
+        )
     else:
-        r = review(args.year, args.meeting, args.driver, args.lap)
+        r = review(args.year, args.meeting, args.driver, args.lap, sources=sources)
     print(
         f"{r.driver} {'had they pitted' if args.what_if else 'pitted'} at the end of lap {r.lap} "
         f"({r.status}): {r.old_compound} ({r.old_tyre_age} laps) -> {r.new_compound}"

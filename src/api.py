@@ -17,7 +17,6 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -116,20 +115,33 @@ def _default_transcriber() -> RadioTranscriber | None:
     return RadioTranscriber() if RadioTranscriber.available() else None
 
 
-WAREHOUSE_REFRESH_S = 15 * 60
+WAREHOUSE_REFRESH_S = 15 * 60  # race weekends (live mode): sessions land before the next one
 
 
-async def _refresh_warehouse_forever() -> None:
-    """Race weekends: pull each finished session into the warehouse soon after OpenF1 frees it,
-    so the pre-Q3 / grid predictions don't need OpenF1 while a session is live (it's closed)."""
-    from src.sim.prerace import refresh_warehouse
+def _refresh_interval_s() -> int | None:
+    """PITWALL_REFRESH_MINUTES (opt-in) keeps the data store current; live mode implies 15."""
+    minutes = os.getenv("PITWALL_REFRESH_MINUTES", "").strip()
+    if minutes:
+        return max(int(float(minutes) * 60), 60)
+    if os.getenv("PITWALL_LIVE_AUTOSTART", "").strip() in ("1", "true", "yes"):
+        return WAREHOUSE_REFRESH_S
+    return None
+
+
+async def _refresh_warehouse_forever(interval_s: int) -> None:
+    """Pull each finished session into the warehouse soon after OpenF1 frees it, plus new
+    stewards' decisions (src/warehouse/refresh.py). On race weekends that also keeps the pre-Q3
+    / grid predictions off OpenF1 while a session is live (it's closed then)."""
+    from src.warehouse.refresh import refresh
 
     while True:
         try:
-            await asyncio.to_thread(refresh_warehouse, datetime.now(UTC).year)
+            report = await asyncio.to_thread(refresh)
+            if report.sessions or report.errors:
+                log.info("refresh: %s", report)
         except Exception:
             log.exception("warehouse refresh failed")
-        await asyncio.sleep(WAREHOUSE_REFRESH_S)
+        await asyncio.sleep(interval_s)
 
 
 def _default_mcp_tools() -> PitwallTools:
@@ -161,7 +173,8 @@ def create_app(
         refresher = None
         if os.getenv("PITWALL_LIVE_AUTOSTART", "").strip() in ("1", "true", "yes"):
             _start_live(app)  # race weekends: follow the live feed from server start
-            refresher = asyncio.create_task(_refresh_warehouse_forever())
+        if interval := _refresh_interval_s():
+            refresher = asyncio.create_task(_refresh_warehouse_forever(interval))
         yield
         if refresher:
             refresher.cancel()

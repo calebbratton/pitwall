@@ -673,23 +673,21 @@ class PitwallTools:
         """Win / podium chances and expected positions for every car from the race state at
         the end of a lap (the leader's), simulated forward with each car's pace, tyres and
         stops still to make. Safety cars to come are left out (luck)."""
-        from src.livetiming.archive import STRATEGY_TOPICS
         from src.livetiming.monitor import RaceMonitor, _circuit_for
+        from src.livetiming.sources import race_messages
         from src.models.tyre_curves import season_curves
         from src.sim.inrace import NotEnoughData, race_state, simulate_from
-        from src.sim.pit_review import archive_race
 
         session = self._race(year, race)
         if isinstance(session, str):
             return session
         try:
-            archived = archive_race(year, session.location, session.date_start[:10])
-            messages = list(archived.messages(STRATEGY_TOPICS))
-        except (LookupError, httpx.HTTPError) as e:
-            return _error(
-                f"{session.label} isn't available from the live-timing archive ({e}); "
-                "this tool needs the race's archived timing"
+            race_data = race_messages(
+                year, session.location, session.date_start[:10], client=self.client, session=session
             )
+        except (LookupError, httpx.HTTPError) as e:
+            return _error(f"no timing for {session.label}: {e}")
+        messages = race_data.messages
         circuit = _circuit_for(messages)
         loss = (
             (circuit.pit_loss.green, circuit.pit_loss.safety_car)
@@ -714,7 +712,7 @@ class PitwallTools:
             return _error(str(e))
         return _json(
             {
-                "source": f"Pit Wall in-race simulator on the {ARCHIVE}",
+                "source": f"Pit Wall in-race simulator ({race_data.source})",
                 "race": session.label,
                 "after_lap": out["lap"],
                 "laps_remaining": out["laps_remaining"],

@@ -96,9 +96,20 @@ the Groq chat stays for the UI.
 - Every result is compact JSON with a `source`; unknowns are `null` or `ERROR: ...` with the
   valid options, never a filled-in value. `PitwallTools` methods are plain functions, tested on
   the Monaco 2024 fixtures (`tests/test_mcp_server.py`).
-- The F1 live-timing archive has answered 401 since 2026-10-16: archive-based tools (pit
-  reviews, who wins from here) work for races cached under `data/livetiming/` only
-  (`archive._index` falls back to the cache).
+- Race timing for the models (pit reviews, who wins from here) comes from
+  `src/livetiming/sources.py`: our live recording if it covers the race (`covers_race`) →
+  F1's static archive, local cache first → rebuilt from OpenF1 (`openf1_feed.py`, the topics
+  the models read; final order from the official gaps). The static archive has answered 401
+  since 2026-10-16, so new races come from recordings or OpenF1. Reviews note their source.
+
+## Keeping data current (`src/warehouse/refresh.py`)
+
+- `python -m src.warehouse.refresh` (cron) or `PITWALL_REFRESH_MINUTES=30` in the API process:
+  ingests every finished session not yet in the warehouse (OpenF1, after a 45-min settle),
+  rebuilds if anything was added, fetches new stewards' decisions. Idempotent; while OpenF1 is
+  closed for a live session it skips and retries next run. Live mode
+  (`PITWALL_LIVE_AUTOSTART=1`) runs it every 15 min and records each session from the SignalR
+  feed (negotiate still works after the archive lockout, checked 2026-10-16).
 
 ## HTTP API (`src/api.py`) and UI
 
