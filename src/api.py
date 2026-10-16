@@ -32,6 +32,9 @@ from src.livetiming.archive import ArchiveSession, list_sessions
 from src.livetiming.monitor import replay
 from src.livetiming.session import SessionRegistry
 from src.llm.transcribe import RadioTranscriber
+from src.mcp_server import PitwallTools, default_tools
+from src.mcp_server import build_server as build_mcp_server
+from src.mcp_server import http_app as mcp_http_app
 from src.rag.decisions import DecisionIndex
 from src.rag.index import RegulationIndex
 from src.seasons import out_of_scope_message, supported_seasons
@@ -86,9 +89,19 @@ def _answer(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_INDEX: list[RegulationIndex] = []
+
+
+def _regulation_index() -> RegulationIndex:
+    """Embedded Qdrant allows one client per storage folder: the chat graph and the MCP
+    server share one index, opened on first use."""
+    if not _INDEX:
+        _INDEX.append(RegulationIndex())
+    return _INDEX[0]
+
+
 def _default_graph():
-    # Embedded Qdrant allows one client per storage folder, so the index is opened once.
-    index = RegulationIndex()
+    index = _regulation_index()
     graph = build_graph(
         HttpOpenF1Client(),
         index,
@@ -119,16 +132,28 @@ async def _refresh_warehouse_forever() -> None:
         await asyncio.sleep(WAREHOUSE_REFRESH_S)
 
 
+def _default_mcp_tools() -> PitwallTools:
+    return default_tools(regulations=_regulation_index)
+
+
 def create_app(
     make_graph: Callable[[], tuple[Any, Callable[[], None]]] = _default_graph,
     make_transcriber: Callable[[], Any] = _default_transcriber,
     chat_model: Any = None,
+    make_mcp_tools: Callable[[], PitwallTools] = _default_mcp_tools,
 ) -> FastAPI:
     """make_graph returns (compiled graph, cleanup). Tests inject a graph with fake models and
-    no transcriber."""
+    no transcriber. The MCP server (src/mcp_server.py) is served at /mcp."""
+    mcp_server = build_mcp_server(make_mcp_tools())
+    mcp_app = mcp_http_app(mcp_server)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        async with mcp_server.session_manager.run(), _app_lifespan(app):
+            yield
+
+    @asynccontextmanager
+    async def _app_lifespan(app: FastAPI):
         app.state.graph, cleanup = make_graph()
         app.state.transcriber = make_transcriber()
         app.state.sessions = SessionRegistry()
@@ -161,6 +186,7 @@ def create_app(
     app.get("/api/live/stream")(live_stream)
     app.get("/api/race/verdicts")(race_verdicts)
     app.get("/api/race/list")(race_list)
+    app.mount("/", mcp_app)  # after the API routes: it only answers /mcp
     return app
 
 

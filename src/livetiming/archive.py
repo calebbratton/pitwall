@@ -52,11 +52,40 @@ def _parse_offset(stamp: str) -> timedelta:
     return timedelta(hours=int(h), minutes=int(m), seconds=float(s))
 
 
+def _index(year: int) -> dict:
+    """The archive's index of a season. When F1 refuses or is unreachable (the archive has
+    answered 401 to everything since 2026-10-16), one built from the sessions cached locally
+    under DEFAULT_CACHE (<year>/<meeting folder>/<date>_<session>/), whose files `ArchiveSession`
+    reads without the network."""
+    try:
+        return json.loads(_get_text(f"{STATIC}/{year}/Index.json"))
+    except httpx.HTTPError:
+        root = DEFAULT_CACHE / str(year)
+        if not root.is_dir():
+            raise
+    meetings = []
+    for meeting in sorted(p for p in root.iterdir() if p.is_dir()):
+        sessions = []
+        for folder in sorted(p for p in meeting.iterdir() if p.is_dir()):
+            day, _, name = folder.name.partition("_")
+            sessions.append(
+                {
+                    "Name": name.replace("_", " "),
+                    "Path": f"{year}/{meeting.name}/{folder.name}/",
+                    "StartDate": day,
+                }
+            )
+        meetings.append(
+            {"Name": meeting.name.partition("_")[2].replace("_", " "), "Sessions": sessions}
+        )
+    return {"Meetings": meetings}
+
+
 def find_session(year: int, meeting: str, session: str = "Race") -> str:
     """Archive path for e.g. (2024, "Miami"), matched case-insensitively against the meeting
     folder name. The yearly index isn't always complete; pass a full path to `ArchiveSession`
     when it misses a session."""
-    index = json.loads(_get_text(f"{STATIC}/{year}/Index.json"))
+    index = _index(year)
     needle = meeting.casefold().replace(" ", "_")
     matches = [
         s["Path"]
@@ -71,7 +100,7 @@ def find_session(year: int, meeting: str, session: str = "Race") -> str:
 
 def list_sessions(year: int, session: str = "Race") -> list[dict[str, str]]:
     """Archived sessions of one type for a season: [{"path", "meeting", "date"}]."""
-    index = json.loads(_get_text(f"{STATIC}/{year}/Index.json"))
+    index = _index(year)
     return [
         {"path": s["Path"], "meeting": m.get("Name", ""), "date": s.get("StartDate", "")[:10]}
         for m in index["Meetings"]

@@ -4,6 +4,13 @@ Where the project stands, what's running, and what's next. See `CLAUDE.md` for a
 and rules, `docs/ROADMAP.md` for phases, `docs/SIMULATION.md` for the simulator design.
 
 ## Built and working
+- **MCP server** (2026-10-16, `src/mcp_server.py`): 20 data + model tools for any MCP client.
+  Local: `claude mcp add pitwall -- uv run --directory ~/projects/pitwall python -m src.mcp_server`.
+  HTTP: `uvicorn src.api:app --port 8000` → `http://localhost:8000/mcp` (hosted: set
+  `PITWALL_MCP_HOSTS`). Generic-question check: `data/generic_eval_2026-10-15.md` (Groq chat).
+  **F1's live-timing archive returns 401 since 2026-10-16**: pit reviews / who wins from here
+  only for races cached in `data/livetiming/` (2026: all but Kuala Lumpur and the early-season
+  gaps); OpenF1-based tools are unaffected.
 - **Post-race strategy chat** (LangGraph, Groq): `python -m src.chat` / UI "STRATEGY CHAT".
 - **FIA regulations RAG** (2024–2026 issues, hybrid search, jargon glossary).
 - **Warehouse** (DuckDB): 2026 + 2025 races, 2026 practice/quali/sprints. `python -m src.warehouse.build`.

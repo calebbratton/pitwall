@@ -105,3 +105,31 @@ def test_no_pit_calls_worth_it_near_the_end(miami):
     calls = {c.tla: c.call for c in pit_calls(late).calls}
     assert calls["BOT"] == "STAY OUT"  # old tyres, but only 2 laps left
     assert calls["NOR"] == "PIT"  # the mandatory compound still applies
+
+
+def test_archive_lookup_falls_back_to_the_local_cache_when_f1_refuses(monkeypatch, tmp_path):
+    # Since 2026-10-16 the archive answers 401 to everything; races already cached locally
+    # (data/livetiming/<year>/<meeting>/<session>/) must still be found.
+    import httpx
+
+    from src.livetiming import archive
+
+    def refused(url):
+        request = httpx.Request("GET", url)
+        raise httpx.HTTPStatusError(
+            "401", request=request, response=httpx.Response(401, request=request)
+        )
+
+    (tmp_path / "2026/2026-10-11_Singapore_Grand_Prix/2026-10-11_Race").mkdir(parents=True)
+    (tmp_path / "2026/2026-10-11_Singapore_Grand_Prix/2026-10-10_Qualifying").mkdir(parents=True)
+    (tmp_path / "2026/2026-09-26_Azerbaijan_Grand_Prix/2026-09-26_Race").mkdir(parents=True)
+    monkeypatch.setattr(archive, "_get_text", refused)
+    monkeypatch.setattr(archive, "DEFAULT_CACHE", tmp_path)
+
+    path = archive.find_session(2026, "Singapore")
+    assert path == "2026/2026-10-11_Singapore_Grand_Prix/2026-10-11_Race/"
+    races = archive.list_sessions(2026)
+    assert {(r["date"], r["path"]) for r in races} == {
+        ("2026-10-11", "2026/2026-10-11_Singapore_Grand_Prix/2026-10-11_Race/"),
+        ("2026-09-26", "2026/2026-09-26_Azerbaijan_Grand_Prix/2026-09-26_Race/"),
+    }
