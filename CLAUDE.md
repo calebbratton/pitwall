@@ -78,6 +78,39 @@ skips telemetry and an error path (ambiguous/future race) straight to `synthesiz
   turns; per-question fields are reset by `route`.
 - Tests use scripted fake models (`tests/test_graph.py`); never call a real LLM in `tests/`.
 
+## MCP server (`src/mcp_server.py`)
+
+Pit Wall as tools for any MCP client: the client's LLM reasons, the server only computes (no LLM
+calls inside tools). User decision 2026-10-16: the direction for "ask anything" is this server,
+the Groq chat stays for the UI.
+
+- Run: `python -m src.mcp_server` (stdio, for Claude Code / Desktop) or the API process, which
+  serves streamable HTTP at `/mcp` (stateless, JSON responses). Hosted: list the public hostnames
+  in `PITWALL_MCP_HOSTS` (comma-separated), otherwise only localhost Host headers are accepted.
+  The hosted server never uses the F1 TV token.
+- Tools are general building blocks (results with gaps, laps, stints with each stint's own wear,
+  pit stops, positions and gaps from line crossings, race control, incidents, weather,
+  regulations, stewards' rulings) plus models (review_pit_stop, who_wins_from_here,
+  predict_race, luck_adjusted_result, tyre_life). Add data as a general tool, not a
+  question-shaped one; check new tools against `data/generic_eval_*.md`.
+- Every result is compact JSON with a `source`; unknowns are `null` or `ERROR: ...` with the
+  valid options, never a filled-in value. `PitwallTools` methods are plain functions, tested on
+  the Monaco 2024 fixtures (`tests/test_mcp_server.py`).
+- Race timing for the models (pit reviews, who wins from here) comes from
+  `src/livetiming/sources.py`: our live recording if it covers the race (`covers_race`) →
+  F1's static archive, local cache first → rebuilt from OpenF1 (`openf1_feed.py`, the topics
+  the models read; final order from the official gaps). The static archive has answered 401
+  since 2026-10-16, so new races come from recordings or OpenF1. Reviews note their source.
+
+## Keeping data current (`src/warehouse/refresh.py`)
+
+- `python -m src.warehouse.refresh` (cron) or `PITWALL_REFRESH_MINUTES=30` in the API process:
+  ingests every finished session not yet in the warehouse (OpenF1, after a 45-min settle),
+  rebuilds if anything was added, fetches new stewards' decisions. Idempotent; while OpenF1 is
+  closed for a live session it skips and retries next run. Live mode
+  (`PITWALL_LIVE_AUTOSTART=1`) runs it every 15 min and records each session from the SignalR
+  feed (negotiate still works after the archive lockout, checked 2026-10-16).
+
 ## HTTP API (`src/api.py`) and UI
 
 - `uvicorn src.api:app --reload --port 8000`. `POST /api/chat` streams SSE events `thread`,

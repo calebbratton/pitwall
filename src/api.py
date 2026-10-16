@@ -17,7 +17,6 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -32,6 +31,9 @@ from src.livetiming.archive import ArchiveSession, list_sessions
 from src.livetiming.monitor import replay
 from src.livetiming.session import SessionRegistry
 from src.llm.transcribe import RadioTranscriber
+from src.mcp_server import PitwallTools, default_tools
+from src.mcp_server import build_server as build_mcp_server
+from src.mcp_server import http_app as mcp_http_app
 from src.rag.decisions import DecisionIndex
 from src.rag.index import RegulationIndex
 from src.seasons import out_of_scope_message, supported_seasons
@@ -86,9 +88,19 @@ def _answer(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_INDEX: list[RegulationIndex] = []
+
+
+def _regulation_index() -> RegulationIndex:
+    """Embedded Qdrant allows one client per storage folder: the chat graph and the MCP
+    server share one index, opened on first use."""
+    if not _INDEX:
+        _INDEX.append(RegulationIndex())
+    return _INDEX[0]
+
+
 def _default_graph():
-    # Embedded Qdrant allows one client per storage folder, so the index is opened once.
-    index = RegulationIndex()
+    index = _regulation_index()
     graph = build_graph(
         HttpOpenF1Client(),
         index,
@@ -103,32 +115,57 @@ def _default_transcriber() -> RadioTranscriber | None:
     return RadioTranscriber() if RadioTranscriber.available() else None
 
 
-WAREHOUSE_REFRESH_S = 15 * 60
+WAREHOUSE_REFRESH_S = 15 * 60  # race weekends (live mode): sessions land before the next one
 
 
-async def _refresh_warehouse_forever() -> None:
-    """Race weekends: pull each finished session into the warehouse soon after OpenF1 frees it,
-    so the pre-Q3 / grid predictions don't need OpenF1 while a session is live (it's closed)."""
-    from src.sim.prerace import refresh_warehouse
+def _refresh_interval_s() -> int | None:
+    """PITWALL_REFRESH_MINUTES (opt-in) keeps the data store current; live mode implies 15."""
+    minutes = os.getenv("PITWALL_REFRESH_MINUTES", "").strip()
+    if minutes:
+        return max(int(float(minutes) * 60), 60)
+    if os.getenv("PITWALL_LIVE_AUTOSTART", "").strip() in ("1", "true", "yes"):
+        return WAREHOUSE_REFRESH_S
+    return None
+
+
+async def _refresh_warehouse_forever(interval_s: int) -> None:
+    """Pull each finished session into the warehouse soon after OpenF1 frees it, plus new
+    stewards' decisions (src/warehouse/refresh.py). On race weekends that also keeps the pre-Q3
+    / grid predictions off OpenF1 while a session is live (it's closed then)."""
+    from src.warehouse.refresh import refresh
 
     while True:
         try:
-            await asyncio.to_thread(refresh_warehouse, datetime.now(UTC).year)
+            report = await asyncio.to_thread(refresh)
+            if report.sessions or report.errors:
+                log.info("refresh: %s", report)
         except Exception:
             log.exception("warehouse refresh failed")
-        await asyncio.sleep(WAREHOUSE_REFRESH_S)
+        await asyncio.sleep(interval_s)
+
+
+def _default_mcp_tools() -> PitwallTools:
+    return default_tools(regulations=_regulation_index)
 
 
 def create_app(
     make_graph: Callable[[], tuple[Any, Callable[[], None]]] = _default_graph,
     make_transcriber: Callable[[], Any] = _default_transcriber,
     chat_model: Any = None,
+    make_mcp_tools: Callable[[], PitwallTools] = _default_mcp_tools,
 ) -> FastAPI:
     """make_graph returns (compiled graph, cleanup). Tests inject a graph with fake models and
-    no transcriber."""
+    no transcriber. The MCP server (src/mcp_server.py) is served at /mcp."""
+    mcp_server = build_mcp_server(make_mcp_tools())
+    mcp_app = mcp_http_app(mcp_server)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        async with mcp_server.session_manager.run(), _app_lifespan(app):
+            yield
+
+    @asynccontextmanager
+    async def _app_lifespan(app: FastAPI):
         app.state.graph, cleanup = make_graph()
         app.state.transcriber = make_transcriber()
         app.state.sessions = SessionRegistry()
@@ -136,7 +173,8 @@ def create_app(
         refresher = None
         if os.getenv("PITWALL_LIVE_AUTOSTART", "").strip() in ("1", "true", "yes"):
             _start_live(app)  # race weekends: follow the live feed from server start
-            refresher = asyncio.create_task(_refresh_warehouse_forever())
+        if interval := _refresh_interval_s():
+            refresher = asyncio.create_task(_refresh_warehouse_forever(interval))
         yield
         if refresher:
             refresher.cancel()
@@ -161,6 +199,7 @@ def create_app(
     app.get("/api/live/stream")(live_stream)
     app.get("/api/race/verdicts")(race_verdicts)
     app.get("/api/race/list")(race_list)
+    app.mount("/", mcp_app)  # after the API routes: it only answers /mcp
     return app
 
 

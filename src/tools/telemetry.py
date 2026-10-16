@@ -9,6 +9,7 @@ Design constraints (Groq free tier: 8K tokens/minute per model):
 """
 
 import json
+import re
 import statistics
 import unicodedata
 from datetime import UTC, datetime, timedelta
@@ -148,6 +149,57 @@ def key_race_events(client: OpenF1Client, session_key: int) -> str:
         or any(word in m.message.upper() for word in _KEY_EVENT_WORDS)
     ]
     return _json(events)
+
+
+_DELETED = re.compile(
+    r"CAR (\d+) \((\w+)\) TIME \S+ DELETED - TRACK LIMITS AT TURN (\d+) LAP (\d+)"
+)
+_BLACK_WHITE = re.compile(r"BLACK AND WHITE FLAG FOR CAR (\d+) \((\w+)\)")
+_CAR = re.compile(r"CARS? (\d+) \((\w+)\)")
+_STEWARDING_WORDS = (
+    "NOTED",
+    "INVESTIGATION",
+    "PENALTY",
+    "REPRIMAND",
+    "WARNING",
+    "SUMMONED",
+    "REPORTED",
+    "NO FURTHER ACTION",
+    "DISQUALIFIED",
+)
+MAX_INCIDENT_MESSAGES = 30
+
+
+def race_incidents(client: OpenF1Client, session_key: int) -> str:
+    """The race's in-race determinations from race control: per driver, lap times deleted for
+    track limits (lap, turn) and the black-and-white flag; then every incident noted,
+    investigated, penalised or cleared, in order. Fetched in code for penalty / incident
+    questions, so the answer counts real deletions instead of guessing."""
+    track_limits: dict[str, dict[str, Any]] = {}
+    incidents: list[list] = []
+    for m in client.get_race_control(session_key):
+        text = m.message.upper()
+        if deleted := _DELETED.search(text):
+            entry = track_limits.setdefault(deleted[2], {"deleted": []})
+            entry["deleted"].append({"lap": int(deleted[4]), "turn": int(deleted[3])})
+        elif flag := _BLACK_WHITE.search(text):
+            track_limits.setdefault(flag[2], {"deleted": []})["black_and_white_flag_lap"] = (
+                m.lap_number
+            )
+        elif any(word in text for word in _STEWARDING_WORDS):
+            incidents.append([m.lap_number, m.message])
+    for tla, entry in track_limits.items():
+        entry["deletions"] = len(entry["deleted"])
+        entry["penalised"] = any(
+            "PENALTY" in msg.upper()
+            and "TRACK LIMITS" in msg.upper()
+            and tla in [c[1] for c in _CAR.findall(msg.upper())]
+            for _, msg in incidents
+        )
+    if len(incidents) > MAX_INCIDENT_MESSAGES:
+        dropped = len(incidents) - MAX_INCIDENT_MESSAGES
+        incidents = incidents[:MAX_INCIDENT_MESSAGES] + [[None, f"TRUNCATED: {dropped} more"]]
+    return _json({"track_limits": track_limits, "incidents": incidents})
 
 
 def race_summary(client: OpenF1Client, session: Session) -> str:
@@ -335,13 +387,26 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
             return _json(rows[:MAX_RACE_CONTROL_MESSAGES] + [note])
         return _json(rows)
 
+    def neutralised_laps(number: int) -> dict[str, list[int]]:
+        """The driver's laps that overlapped a SC / VSC / red flag, by kind."""
+        out: dict[str, list[int]] = {}
+        for lap in client.get_laps(sk, number):
+            for kind in ("SC", "VSC", "RED"):
+                if _overlaps(lap, [w for w in windows() if w[2] == kind]):
+                    out.setdefault(kind, []).append(lap.lap_number)
+        return out
+
     @tool
-    def review_pit_stop(driver: str, lap: int | None = None) -> str:
-        """Was this pit stop the right call? Replays the race to the moment the driver entered
-        the pits and simulates the alternatives (pit that lap, stay out 1-5 more laps, no more
-        stops) with tyre wear, fresh-tyre gain and pit loss measured in this race; rivals stop
-        when they really did. Give the driver and the lap they pitted (their in-lap). Without a
-        lap, returns the laps they pitted on. Takes ~20-60 s."""
+    def review_pit_stop(driver: str, lap: int | None = None, compound: str | None = None) -> str:
+        """Pit stop reviews and what-ifs, simulated from this race's measured tyre wear and pit
+        loss; rivals stop when they really did. Give the driver and a lap:
+        - a lap they pitted on (their in-lap): was that stop right? Compares it with staying out
+          1-5 more laps and with no more stops.
+        - any other lap: what if they had pitted at the end of it (e.g. under a SC/VSC)?
+          Compares that stop with what they really did. `compound`: tyre fitted (default: the
+          one they really fitted next).
+        Without a lap, returns the laps they pitted on and their laps under SC/VSC/red flag.
+        Takes ~20-60 s."""
         d = resolve(driver)
         if isinstance(d, str):
             return d
@@ -352,17 +417,49 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
         ]
         stops = sorted(stops)[:-1]  # the last stint ends at the flag, not in the pits
         if lap is None:
-            return _json({"driver": d.name_acronym, "pitted_on_laps": stops})
+            return _json(
+                {
+                    "driver": d.name_acronym,
+                    "pitted_on_laps": stops,
+                    "laps_under_neutralisation": neutralised_laps(d.driver_number),
+                }
+            )
+        hypothetical = int(lap) not in stops
+        # OpenF1's location isn't always the archive's meeting name ("Marina Bay" is filed as
+        # Singapore): the race date finds it either way.
+        race_day = session.date_start[:10]
         try:
-            from src.sim.pit_review import review
+            from src.sim.pit_review import review, what_if_stop
 
-            r = review(session.year, session.location, d.name_acronym, int(lap), sims=1500)
+            if hypothetical:
+                r = what_if_stop(
+                    session.year,
+                    session.location,
+                    d.name_acronym,
+                    int(lap),
+                    compound,
+                    sims=1500,
+                    day=race_day,
+                )
+            else:
+                r = review(
+                    session.year,
+                    session.location,
+                    d.name_acronym,
+                    int(lap),
+                    sims=1500,
+                    day=race_day,
+                )
         except Exception as e:  # noqa: BLE001 - errors go back to the model
             return f"ERROR: {type(e).__name__}: {e}. Laps {d.name_acronym} pitted on: {stops}"
         return _json(
             {
-                "driver": r.driver,
-                "lap": r.lap,
+                "question": (
+                    f"what if {r.driver} had pitted at the end of lap {r.lap}"
+                    if hypothetical
+                    else f"was {r.driver}'s stop at the end of lap {r.lap} right"
+                ),
+                "pitted_on_laps": stops,
                 "track_status_at_decision": r.status,
                 "tyres": f"{r.old_compound} ({r.old_tyre_age} laps) -> {r.new_compound}",
                 "measured": r.measured,
@@ -373,9 +470,11 @@ def build_telemetry_tools(client: OpenF1Client, session: Session) -> list[BaseTo
                         "p_win": b.p_win,
                         "p_podium": b.p_podium,
                         "p_better_than_actual": b.p_better_than_actual,
+                        **({"p_worse_than_actual": b.p_worse_than_actual} if hypothetical else {}),
                     }
                     for b in r.branches
                 ],
+                **({"time_ledger": r.ledger} if r.ledger else {}),
                 "verdict": r.verdict,
                 "notes": r.notes,
             }

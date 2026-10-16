@@ -16,6 +16,7 @@ GLOSSARY: dict[str, str] = {
     r"compounds?": "specifications of dry-weather tyres",
     r"degradation|\bdeg\b": "use of tyres",
     r"restart": "resumption",
+    r"track[\s-]?limits?": "leaving the track gaining an advantage",
 }
 
 

@@ -30,6 +30,8 @@ class Driver(_Record):
     name_acronym: str
     full_name: str
     team_name: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
 
 
 class Stint(_Record):
@@ -81,6 +83,7 @@ class PitStop(_Record):
     driver_number: int
     lap_number: int
     lane_duration: float | None = None  # pit entry to pit exit, seconds
+    stop_duration: float | None = None  # stationary time, seconds (not published for every race)
 
 
 class SessionResult(_Record):
@@ -91,3 +94,7 @@ class SessionResult(_Record):
     dnf: bool = False
     dns: bool = False
     dsq: bool = False
+    # Race: seconds behind the winner, or "+N LAP(S)" for lapped cars; None when not published.
+    # Qualifying publishes one value per segment (a list).
+    gap_to_leader: float | str | list | None = None
+    duration: float | list | None = None  # race time, seconds

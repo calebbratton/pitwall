@@ -20,6 +20,7 @@ dependencies = [
     "pytz",  # duckdb needs it to return TIMESTAMPTZ values
     "numpy",
     "scikit-learn",  # gradient-boosted trees in the rival pit-timing model
+    "mcp>=2.3,<3",  # MCP server (src/mcp_server.py): stdio and streamable HTTP at /mcp
 ]
 
 [project.optional-dependencies]
