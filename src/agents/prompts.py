@@ -6,9 +6,12 @@ Classify the user's latest message and plan the regulation search.
 - mode "rules": a question about the FIA Sporting Regulations alone.
   A question that names a specific race is "race" even when it's about a rule (it needs that
   race's data): "Did everyone at Monaco 2026 meet the two-compound rule?" -> race.
-  Penalty and incident questions ("should Hamilton get a penalty for impeding in FP2?", "what
-  did the stewards give Norris at Monza?") are "rules": they're answered from the regulations
-  and the stewards' published decisions, not lap data.
+  Penalty and incident questions about something that happened in a race ("should Antonelli
+  have got a track limits penalty in Singapore?", "was Norris's penalty at Monza fair?") are
+  "race": they need that race's race-control record (deleted laps, flags, investigations) as
+  well as the regulations and the stewards' published decisions. Incidents in practice or
+  qualifying ("should Hamilton get a penalty for impeding in FP2?") are "rules": there is no
+  lap data for those sessions, only the regulations and the stewards' decisions.
 - Follow-ups ("what about Piastri?", "and under a VSC?") refer to the conversation so far.
   The race currently being discussed is: {race_context}. If the user continues with that race,
   return year and place as null.
@@ -36,13 +39,20 @@ Already fetched for you:
 {race_summary}
 
 For questions comparing teams or the whole field, the summary is usually enough: reply "done"
-without calling tools. Otherwise fetch only what the question needs: list_drivers for a team,
+without calling tools. For penalty / incident questions the race-control incident record
+(track-limits deletions, flags, investigations, penalties) is already fetched: reply "done"
+unless the question needs lap times around the incident. Otherwise fetch only what the question needs: list_drivers for a team,
 get_pace_summary per driver per stint for degradation, get_lap_times for short windows around
 laps the question names (a team means both drivers).
 For "was pitting / stopping right?" or "should they have stayed out?" questions about a specific
 stop, call review_pit_stop with the driver and the lap they pitted (get the lap from the race
-summary or get_tyre_stints, or call it without a lap to list their stops). Its verdict and
-options are simulated from measured data - report them, don't redo the reasoning.
+summary or get_tyre_stints, or call it without a lap to list their stops).
+For "what if they had pitted on lap N / under the safety car / under the VSC?", call
+review_pit_stop with the driver and that lap: for a SC/VSC, a lap the driver ran under it (from
+the key race events, or call it without a lap: it lists their laps under each neutralisation).
+If there were several SC/VSC periods and the question doesn't say which, review each.
+Its verdict, time_ledger (stop cost vs fresh-tyre gain, measured from the cars that really
+stopped) and simulated options come from measured data - report them, don't redo the reasoning.
 """
 
 ANALYST = """\
@@ -59,6 +69,10 @@ Rules you must follow:
 - STEWARDS' DECISIONS are real published rulings. A ruling on the incident asked about is the
   answer; rulings on other incidents are precedent - say so, and don't present precedent as the
   outcome of an incident still under investigation.
+- For penalty and incident questions, the race_incidents result is the official race-control
+  record: count track-limits deletions and flags from it, and say what the stewards did (noted,
+  investigated, penalised, no further action). The threshold for a track-limits penalty is only
+  stated if it appears in REGULATIONS or STEWARDS' DECISIONS; otherwise say it wasn't retrieved.
 - Pace trends include fuel burn-off, which makes cars faster, so they understate tyre degradation.
 - Include a regulation finding only when a rule actually bears on the answer; don't add findings
   about what the regulations don't cover.

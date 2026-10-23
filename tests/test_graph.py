@@ -159,7 +159,7 @@ def test_fetch_loop_is_capped():
         [RouteDecision(mode="race", year=2024, place="Monaco", focus="f", regulation_queries=["q"])]
     )
     endless = [
-        AIMessage("", tool_calls=[_tool_call("list_drivers", {}, str(i))])
+        AIMessage("", tool_calls=[_tool_call("get_lap_times", {"driver": str(i)}, str(i))])
         for i in range(graph_module.MAX_FETCH_ROUNDS + 5)
     ]
     fetcher = Scripted(endless)
@@ -169,6 +169,41 @@ def test_fetch_loop_is_capped():
 
     assert len(fetcher.calls) == graph_module.MAX_FETCH_ROUNDS
     assert state["messages"][-1].content.startswith("Verdict.")
+
+
+def test_repeated_tool_calls_are_answered_once_and_end_the_fetch_phase():
+    # A model that re-sends the same calls round after round (seen live: review_pit_stop for
+    # the same laps in rounds 2-4) gets the earlier result back without re-running the tool,
+    # and a round of nothing but repeats ends fetching.
+    router = Scripted(
+        [RouteDecision(mode="race", year=2024, place="Monaco", focus="f", regulation_queries=["q"])]
+    )
+    stints = _tool_call("get_tyre_stints", {"driver": "NOR"}, "1")
+    fetcher = Scripted(
+        [
+            AIMessage("", tool_calls=[stints]),
+            AIMessage(
+                "",
+                tool_calls=[
+                    {**stints, "id": "2"},
+                    _tool_call("get_tyre_stints", {"driver": "LEC"}, "3"),
+                ],
+            ),
+            AIMessage("", tool_calls=[{**stints, "id": "4"}]),
+            AIMessage("never reached"),
+        ]
+    )
+    graph = _build(router, fetcher, Scripted([_analysis()]))
+
+    state = _ask(graph, "q")
+
+    assert len(fetcher.calls) == 3
+    stint_results = [r for r in state["fetched_telemetry_json"] if r["tool"] == "get_tyre_stints"]
+    assert [r["args"] for r in stint_results] == [{"driver": "NOR"}, {"driver": "LEC"}]
+    repeat = next(m for m in state["fetch_messages"] if getattr(m, "tool_call_id", "") == "2")
+    first = next(m for m in state["fetch_messages"] if getattr(m, "tool_call_id", "") == "1")
+    assert repeat.content.startswith(graph_module.REPEATED_CALL_NOTE)
+    assert first.content in repeat.content
 
 
 def test_ambiguous_place_returns_options_without_calling_analyst():
@@ -210,11 +245,15 @@ def test_fetch_prompt_stays_small_across_rounds():
     router = Scripted(
         [RouteDecision(mode="race", year=2024, place="Monaco", focus="f", regulation_queries=["q"])]
     )
-    all_stints = [_tool_call("get_tyre_stints", {}, str(i)) for i in range(3)]
+    long_results = [
+        _tool_call("get_tyre_stints", {}, "1"),
+        _tool_call("list_drivers", {}, "2"),
+        _tool_call("get_race_control", {}, "3"),
+    ]
     fetcher = Scripted(
         [
-            AIMessage("", tool_calls=all_stints),
-            AIMessage("", tool_calls=all_stints[:1]),
+            AIMessage("", tool_calls=long_results),
+            AIMessage("", tool_calls=[_tool_call("get_tyre_stints", {"driver": "NOR"}, "4")]),
             AIMessage("done"),
         ]
     )
@@ -223,6 +262,7 @@ def test_fetch_prompt_stays_small_across_rounds():
 
     third_call = fetcher.calls[2]
     old_results = [m for m in third_call if isinstance(m, ToolMessage)][:3]
+    assert all(len(r["result"]) > 400 for r in state["fetched_telemetry_json"][2:5])
     assert all(len(m.content) < 400 for m in old_results)
     assert all(len(r["result"]) <= 2600 for r in state["fetched_telemetry_json"])
 
@@ -321,3 +361,24 @@ def test_penalty_question_cites_stewards_decisions_separately():
     )
     _ask(graph, "What is the two-compound rule?")
     assert other.queries == []
+
+
+def test_race_penalty_question_gets_the_race_control_incident_record():
+    router = Scripted(
+        [
+            RouteDecision(
+                mode="race",
+                year=2024,
+                place="Monaco",
+                focus="Should Bottas have had a track limits penalty?",
+                regulation_queries=["leaving the track"],
+            )
+        ]
+    )
+    fetcher = Scripted([AIMessage("done")])
+    analyst = Scripted([_analysis("30.5")])
+    graph = _build(router, fetcher=fetcher, analyst=analyst, decisions=FakeDecisions())
+    state = _ask(graph, "Should Bottas have got a track limits penalty at Monaco 2024?")
+    tools = [r["tool"] for r in state["fetched_telemetry_json"]]
+    assert tools == ["key_race_events", "race_summary", "race_incidents"]
+    assert '"BOT"' in state["fetched_telemetry_json"][2]["result"]

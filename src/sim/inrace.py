@@ -71,6 +71,9 @@ class RaceState:
     # Per car: P(pits at the end of lap k) for k = 1..remaining from the rival pit-timing model
     # (pit_hazard.future_hazards). Empty = a uniform stop lap before the tyres run out.
     stop_hazard: dict[str, list[float]] = field(default_factory=dict)
+    # Measured cost of a stop on this lap (e.g. under this VSC, from the cars that made one);
+    # None = from the pit losses and the track status.
+    pit_loss_now: float | None = None
 
 
 @dataclass(frozen=True)
@@ -369,7 +372,7 @@ def simulate_from(
     new_cidx = np.array([labels.index(nc) for nc in new_compound])[None, :]
     life_now = np.tile(life, (sims, 1))
     running = np.ones((sims, n), dtype=bool)
-    neutralised_loss = {
+    neutralised_loss = state.pit_loss_now or {
         "SAFETY_CAR": state.pit_loss_sc,
         "VSC": (state.pit_loss_sc + state.pit_loss_green) / 2,
     }.get(state.status, state.pit_loss_green)

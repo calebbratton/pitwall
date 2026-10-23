@@ -4,6 +4,19 @@ Where the project stands, what's running, and what's next. See `CLAUDE.md` for a
 and rules, `docs/ROADMAP.md` for phases, `docs/SIMULATION.md` for the simulator design.
 
 ## Built and working
+- **MCP server** (2026-10-16, `src/mcp_server.py`): 20 data + model tools for any MCP client.
+  Local: `claude mcp add pitwall -- uv run --directory ~/projects/pitwall python -m src.mcp_server`.
+  HTTP: `uvicorn src.api:app --port 8000` → `http://localhost:8000/mcp` (hosted: set
+  `PITWALL_MCP_HOSTS`). Generic-question check: `data/generic_eval_2026-10-15.md` (Groq chat).
+  **F1's live-timing archive returns 401 since 2026-10-16.** Race timing now comes from a
+  complete live recording, else the cached archive, else rebuilt from OpenF1
+  (`src/livetiming/sources.py`); the OpenF1 rebuild matches the official top 10 on KL,
+  Singapore, Baku, Madrid, Monaco, Silverstone, and Singapore HAM lap 39 gives the same ledger
+  (13.8 s cost, 55.3 s gain, +41.6 s) as the archive. Backup of the cache:
+  `~/pitwall-livetiming-backup-2026-10-16.tgz`. None of the existing recordings covers a whole
+  race (reconnect snapshots, a partial KL race).
+- **Data refresh** (2026-10-16): `python -m src.warehouse.refresh` / `PITWALL_REFRESH_MINUTES`;
+  warehouse current through Singapore 2026 (incl. its sprint weekend).
 - **Post-race strategy chat** (LangGraph, Groq): `python -m src.chat` / UI "STRATEGY CHAT".
 - **FIA regulations RAG** (2024–2026 issues, hybrid search, jargon glossary).
 - **Warehouse** (DuckDB): 2026 + 2025 races, 2026 practice/quali/sprints. `python -m src.warehouse.build`.
@@ -142,6 +155,15 @@ has opt-in browser notifications (battle, SC call, undercut). Recommend-only: F1
 - Post-race chat: review_pit_stop tool (pit review engine) for "was pitting the right call?";
   the review notes rivals who got a cheap SC/VSC stop just before (Madrid NOR lap 15).
 - Live strategy chat: context includes pit-within-3-laps (hazard), undercut chances, battles.
+- Post-race chat what-ifs (2026-10-15): "what if HAM had pitted under the VSC?" -
+  review_pit_stop on a lap the driver didn't pit simulates a stop there vs what they really did
+  (`python -m src.sim.pit_review ... --lap N --what-if`); without a lap it lists their stops and
+  their laps under SC/VSC/red flag. Simulates one more stop only (noted when they made more).
+- Race incident questions (2026-10-15): "should ANT have got a track limits penalty in
+  Singapore?" routes to "race" (race-practice/quali incidents stay "rules"); resolve adds
+  `race_incidents` (race control: per-driver track-limits deletions with lap/turn, black-and-white
+  flag, every incident noted/investigated/penalised) next to the regs and stewards' rulings.
+  Gap: the track-limits threshold lives in the Race Director's Event Notes, which aren't indexed.
 - Baselines (2026-10-03, `python -m src.sim.baselines`): 15 races of 2026 at the grid stage,
   luck-adjusted result. Winner log-loss / podium log-loss / favourite won: model 1.294 / 0.237 /
   9; grid-slot rates (2023-25) 1.428 / 0.288 / 8; LLM (Groq gpt-oss-120b, same numbers + last 3
